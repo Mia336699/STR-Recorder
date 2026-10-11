@@ -67,12 +67,12 @@ pub async fn add_streamer(
     username: String,
     state: State<'_, DesktopState>,
 ) -> CmdResult<serde_json::Value> {
-    let username = username.trim().to_lowercase();
+    let settings = state.app_state.get_settings();
+    let username = stripchat_recorder_lib::streaming::identity::normalize_with_mirror(&username, settings.sc_mirror_url.as_deref()).map_err(map_err)?;
     if username.is_empty() {
         return Err("用户名不能为空".to_string());
     }
-    let settings = state.app_state.get_settings();
-    let api = stripchat_recorder_lib::streaming::stripchat::StripchatApi::new_api_only(
+    let api = stripchat_recorder_lib::streaming::platform::StreamApi::new_api_only(
         settings.api_proxy_url.as_deref(),
         settings.cdn_proxy_url.as_deref(),
         settings.sc_mirror_url.as_deref(),
@@ -126,11 +126,11 @@ pub async fn start_recording(
     username: String,
     state: State<'_, DesktopState>,
 ) -> CmdResult<serde_json::Value> {
-    let playlist_url = if let Some(url) = state.monitor.get_cached_playlist_url(&username) {
+    let (playlist_url, audio_url) = if let Some(url) = state.monitor.get_cached_playlist_url(&username) {
         url
     } else {
         let settings = state.app_state.get_settings();
-        let api = stripchat_recorder_lib::streaming::stripchat::StripchatApi::new_api_only(
+        let api = stripchat_recorder_lib::streaming::platform::StreamApi::new_api_only(
             settings.api_proxy_url.as_deref(),
             settings.cdn_proxy_url.as_deref(),
             settings.sc_mirror_url.as_deref(),
@@ -143,11 +143,12 @@ pub async fn start_recording(
         );
         let info = api.get_stream_info(&username, true).await.map_err(map_err)?;
         info.playlist_url
+            .map(|url| (url,info.audio_playlist_url))
             .ok_or_else(|| format!("Stream offline: {}", username))?
     };
     let path = state
         .recorder
-        .start_recording_with_emitter(&username, &playlist_url, Arc::clone(&state.emitter))
+        .start_recording_with_audio(&username, &playlist_url, audio_url, Arc::clone(&state.emitter))
         .await
         .map_err(map_err)?;
     Ok(serde_json::json!({ "path": path }))
@@ -173,7 +174,7 @@ pub async fn verify_streamer(
     state: State<'_, DesktopState>,
 ) -> CmdResult<serde_json::Value> {
     let settings = state.app_state.get_settings();
-    let api = stripchat_recorder_lib::streaming::stripchat::StripchatApi::new_api_only(
+    let api = stripchat_recorder_lib::streaming::platform::StreamApi::new_api_only(
         settings.api_proxy_url.as_deref(),
         settings.cdn_proxy_url.as_deref(),
         settings.sc_mirror_url.as_deref(),
@@ -343,6 +344,9 @@ pub async fn run_postprocess_cmd(
     path: String,
     state: State<'_, DesktopState>,
 ) -> CmdResult<serde_json::Value> {
+    if state.exiting.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err("Application is finalizing recordings".into());
+    }
     let pipeline = state.app_state.get_pipeline();
     if pipeline.nodes.is_empty() {
         return Err("后处理流水线为空".to_string());
@@ -363,6 +367,9 @@ pub async fn run_postprocess_batch(
     paths: Vec<String>,
     state: State<'_, DesktopState>,
 ) -> CmdResult<serde_json::Value> {
+    if state.exiting.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err("Application is finalizing recordings".into());
+    }
     let pipeline = state.app_state.get_pipeline();
     if pipeline.nodes.is_empty() {
         return Err("后处理流水线为空".to_string());

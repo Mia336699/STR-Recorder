@@ -220,7 +220,7 @@ export const useStreamersStore = defineStore("streamers", () => {
 			}),
 			on("api-error", (payload) => {
 				const p = payload as { message: string };
-				sonnerToast.error(`Stripchat API连接错误: ${p.message}`);
+				sonnerToast.error(`直播平台 API 连接错误: ${p.message}`);
 			}),
 		]);
 	}

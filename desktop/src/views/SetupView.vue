@@ -144,7 +144,7 @@ async function finish() {
 			<div class="flex flex-col gap-1.5">
 				<div class="flex items-center gap-2.5">
 					<span class="w-3 h-3 rounded-full bg-destructive shrink-0" />
-					<span class="text-lg font-bold">StripchatRecorder</span>
+					<span class="text-lg font-bold">STR Recorder</span>
 				</div>
 				<h1 class="text-2xl font-bold mt-1">{{ t("setup.title") }}</h1>
 				<p class="text-sm text-muted-foreground">{{ t("setup.subtitle") }}</p>

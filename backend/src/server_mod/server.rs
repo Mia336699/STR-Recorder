@@ -231,12 +231,12 @@ async fn add_streamer(
     AxumState(s): AxumState<ServerState>,
     Json(body): Json<AddStreamerBody>,
 ) -> ApiResult<serde_json::Value> {
-    let username = body.username.trim().to_lowercase();
+    let settings = s.app_state.get_settings();
+    let username = crate::streaming::identity::normalize_with_mirror(&body.username, settings.sc_mirror_url.as_deref()).map_err(ApiError::from)?;
     if username.is_empty() {
         return Err(ApiError("用户名不能为空".into()));
     }
-    let settings = s.app_state.get_settings();
-    let api = crate::streaming::stripchat::StripchatApi::new_api_only(
+    let api = crate::streaming::platform::StreamApi::new_api_only(
         settings.api_proxy_url.as_deref(),
         settings.cdn_proxy_url.as_deref(),
         settings.sc_mirror_url.as_deref(),
@@ -305,11 +305,11 @@ async fn start_recording(
     AxumState(s): AxumState<ServerState>,
     Path(name): Path<String>,
 ) -> ApiResult<serde_json::Value> {
-    let playlist_url = if let Some(url) = s.monitor.get_cached_playlist_url(&name) {
+    let (playlist_url, audio_url) = if let Some(url) = s.monitor.get_cached_playlist_url(&name) {
         url
     } else {
         let settings = s.app_state.get_settings();
-        let api = crate::streaming::stripchat::StripchatApi::new_api_only(
+        let api = crate::streaming::platform::StreamApi::new_api_only(
             settings.api_proxy_url.as_deref(),
             settings.cdn_proxy_url.as_deref(),
             settings.sc_mirror_url.as_deref(),
@@ -325,11 +325,12 @@ async fn start_recording(
             .await
             .map_err(ApiError::from)?;
         info.playlist_url
+            .map(|url| (url,info.audio_playlist_url))
             .ok_or_else(|| ApiError(format!("Stream offline: {}", name)))?
     };
     let path = s
         .recorder
-        .start_recording_with_emitter(&name, &playlist_url, Arc::clone(&s.emitter))
+        .start_recording_with_audio(&name, &playlist_url, audio_url, Arc::clone(&s.emitter))
         .await
         .map_err(ApiError::from)?;
     Ok(Json(serde_json::json!({ "path": path })))
@@ -356,7 +357,7 @@ async fn verify_streamer(
     Path(name): Path<String>,
 ) -> ApiResult<serde_json::Value> {
     let settings = s.app_state.get_settings();
-    let api = crate::streaming::stripchat::StripchatApi::new_api_only(
+    let api = crate::streaming::platform::StreamApi::new_api_only(
         settings.api_proxy_url.as_deref(),
         settings.cdn_proxy_url.as_deref(),
         settings.sc_mirror_url.as_deref(),

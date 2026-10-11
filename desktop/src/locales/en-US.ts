@@ -77,9 +77,10 @@ export default {
 	},
 	addStreamer: {
 		title: "Add Streamer",
-		description: "Enter a Stripchat username or URL to add a streamer to the tracking list",
-		label: "Stripchat username or URL",
-		placeholder: "e.g. alice or https://stripchat.com/alice",
+		description: "Enter a username or room URL to add a streamer to the tracking list",
+		label: "Username or room URL",
+		platform: "Platform",
+		placeholder: "Username or Stripchat / Chaturbate room URL",
 		cancel: "Cancel",
 		submit: "Add",
 		submitting: "Adding...",
@@ -376,11 +377,11 @@ export default {
 			title: "Recording Output Directory",
 			desc: "Recordings will be saved to this directory. Make sure there is enough disk space.",
 			placeholder: "/path/to/recordings",
-			hint: "Enter an absolute path on the server, e.g. /data/recordings or D:\\recordings",
+			hint: "Enter the full path to a local folder, e.g. /Users/yourname/Movies/STR",
 		},
 		step3: {
 			title: "Network Proxies (Optional)",
-			desc: "Configure proxies if the server cannot access Stripchat directly. You can skip this step if not needed.",
+			desc: "Configure proxies if this computer cannot access the streaming sites directly. Skip if not needed.",
 		},
 	},
 };

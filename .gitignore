@@ -26,3 +26,6 @@ dist-ssr
 # Build output
 build/
 build_tmp/
+
+# Generated macOS dependencies
+desktop/src-tauri/resources/

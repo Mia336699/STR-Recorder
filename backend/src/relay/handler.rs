@@ -42,6 +42,10 @@ pub async fn stream_handler(
     AxumState(s): AxumState<RelayState>,
     Path(modelname): Path<String>,
 ) -> Response {
+    let modelname = match crate::streaming::identity::normalize(&modelname) {
+        Ok(name) => name,
+        Err(error) => return (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
+    };
     // 若没有活跃会话，自动启动 worker / Auto-start worker if no active session
     if !s.relay_manager.has_session(&modelname) {
         let (stop_tx, ts_tx) = start_streamer(

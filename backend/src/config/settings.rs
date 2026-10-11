@@ -145,6 +145,7 @@ fn default_server_port() -> u16 {
 /// 返回可执行文件所在目录，用于定位配置文件和模块目录。
 /// Returns the directory containing the executable, used to locate config files and module directories.
 pub fn exe_dir() -> PathBuf {
+    if let Some(root) = crate::core::runtime::data_root() { return root; }
     std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|p| p.to_path_buf()))
@@ -699,7 +700,7 @@ pub async fn run_config_check(state: &Arc<AppState>, emitter: &Arc<dyn crate::co
     let settings = state.get_settings();
     let streamers = state.get_streamers();
 
-    let api = match crate::streaming::stripchat::StripchatApi::new_api_only(
+    let api = match crate::streaming::platform::StreamApi::new_api_only(
         settings.api_proxy_url.as_deref(),
         settings.cdn_proxy_url.as_deref(),
         settings.sc_mirror_url.as_deref(),
@@ -729,9 +730,8 @@ pub async fn run_config_check(state: &Arc<AppState>, emitter: &Arc<dyn crate::co
                 Err(_) => {
                     if attempt < MAX_ATTEMPTS {
                         tokio::time::sleep(RETRY_DELAY).await;
-                    } else {
-                        confirmed_missing = true;
                     }
+                    // Network errors do not prove an account was deleted.
                 }
             }
         }

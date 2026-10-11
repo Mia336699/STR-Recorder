@@ -78,13 +78,14 @@
   },
   "addStreamer": {
     "title": "添加主播",
-    "description": "输入 Stripchat 用户名或链接以添加主播到追踪列表",
-    "label": "Stripchat 用户名或链接",
-    "placeholder": "例如: alice 或 https://stripchat.com/alice",
+    "description": "输入用户名或房间链接以添加主播到追踪列表",
+    "label": "用户名或房间链接",
+    "placeholder": "用户名或 Stripchat / Chaturbate 房间链接",
     "cancel": "取消",
     "submit": "确认添加",
     "submitting": "添加中...",
-    "done": "已添加主播 {name}"
+    "done": "已添加主播 {name}",
+    "platform": "平台"
   },
   "recordings": {
     "title": "录制文件",
@@ -382,11 +383,11 @@
       "title": "录制输出目录",
       "desc": "录制文件将保存到此目录，请确保该路径有足够的磁盘空间",
       "placeholder": "/path/to/recordings",
-      "hint": "填写服务器上的绝对路径，例如 /data/recordings 或 D:\\recordings"
+      "hint": "填写本机文件夹的完整路径，例如 /Users/你的用户名/Movies/STR"
     },
     "step3": {
       "title": "网络代理（可选）",
-      "desc": "如果服务器无法直接访问 Stripchat，可在此配置代理。不需要可直接点击「完成配置」"
+      "desc": "如果本机无法直接访问直播网站，可在此配置代理。不需要可直接点击「完成配置」"
     }
   }
 }

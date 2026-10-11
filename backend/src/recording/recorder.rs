@@ -14,7 +14,7 @@ use crate::config::settings::AppState;
 use crate::core::emitter::{Emitter, EmitterExt};
 use crate::core::error::{AppError, Result};
 use crate::recording::hls::{get_url_prefix, parse_playlist};
-use crate::streaming::stripchat::StripchatApi;
+use crate::streaming::platform::StreamApi;
 use chrono::Local;
 use parking_lot::RwLock;
 use std::collections::{HashMap, HashSet};
@@ -23,6 +23,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, LazyLock};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tokio::sync::{Semaphore, mpsc};
 
 /// 全局 ffmpeg 并发信号量，限制同时运行的 ffmpeg 进程数（最多 4 个）。
@@ -46,6 +47,8 @@ pub struct RecordingSession {
 /// 录制管理器，管理所有主播的录制会话。
 /// Recording manager that manages all streamer recording sessions.
 pub struct RecorderManager {
+    shutting_down: AtomicBool,
+    pending_tasks: AtomicUsize,
     /// 应用状态 / Application state
     state: Arc<AppState>,
     /// 活跃录制会话表（用户名 -> 会话）/ Active recording sessions (username -> session)
@@ -62,11 +65,29 @@ pub struct RecorderManager {
     pub waiting_merge_dirs: RwLock<HashSet<PathBuf>>,
 }
 
+struct RecordingTaskGuard(Arc<RecorderManager>);
+impl Drop for RecordingTaskGuard {
+    fn drop(&mut self) { self.0.pending_tasks.fetch_sub(1, Ordering::SeqCst); }
+}
+
 impl RecorderManager {
+    /// Reject new sessions, signal all downloads, and wait for merges and post-processing.
+    pub async fn shutdown(self: &Arc<Self>) {
+        self.shutting_down.store(true, Ordering::SeqCst);
+        loop {
+            let names: Vec<String> = self.sessions.read().keys().cloned().collect();
+            for name in names { let _ = self.stop_recording(&name).await; }
+            if self.pending_tasks.load(Ordering::SeqCst) == 0 { break; }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    }
+
     /// 创建新的录制管理器实例。
     /// Create a new recorder manager instance.
     pub fn new(state: Arc<AppState>) -> Arc<Self> {
         Arc::new(Self {
+            shutting_down: AtomicBool::new(false),
+            pending_tasks: AtomicUsize::new(0),
             state,
             sessions: RwLock::new(HashMap::new()),
             naturally_stopped: RwLock::new(HashSet::new()),
@@ -83,8 +104,8 @@ impl RecorderManager {
         self.sessions.read().contains_key(username)
     }
 
-    /// 获取 CDN TLD 缓存的共享引用（供 StripchatApi 使用）。
-    /// Get a shared reference to the CDN TLD cache (for use by StripchatApi).
+    /// 获取 CDN TLD 缓存的共享引用（供 StreamApi 使用）。
+    /// Get a shared reference to the CDN TLD cache (for use by StreamApi).
     pub fn cdn_tld_cache(&self) -> Arc<parking_lot::Mutex<HashMap<String, String>>> {
         Arc::clone(&self.preferred_tld_by_node)
     }
@@ -135,6 +156,16 @@ impl RecorderManager {
         playlist_url: &str,
         emitter: Arc<dyn Emitter>,
     ) -> Result<String> {
+        self.start_recording_with_audio(username,playlist_url,None,emitter).await
+    }
+
+    pub async fn start_recording_with_audio(
+        self: &Arc<Self>, username: &str, playlist_url: &str,
+        audio_playlist_url: Option<String>, emitter: Arc<dyn Emitter>,
+    ) -> Result<String> {
+        if self.shutting_down.load(Ordering::SeqCst) {
+            return Err(AppError::Other("Application is finalizing recordings".into()));
+        }
         if self.is_recording(username) {
             return Err(AppError::AlreadyRecording(username.to_string()));
         }
@@ -146,6 +177,14 @@ impl RecorderManager {
             ));
         }
 
+        // Serialize admission with shutdown and duplicate starts.
+        let mut sessions = self.sessions.write();
+        if self.shutting_down.load(Ordering::SeqCst) {
+            return Err(AppError::Other("Application is finalizing recordings".into()));
+        }
+        if sessions.contains_key(username) {
+            return Err(AppError::AlreadyRecording(username.into()));
+        }
         let timestamp = Local::now().format("%Y%m%d_%H%M%S");
         let session_dir = PathBuf::from(&settings.output_dir)
             .join(username)
@@ -161,7 +200,9 @@ impl RecorderManager {
             stop_tx,
         };
 
-        self.sessions.write().insert(username.to_string(), session);
+        self.pending_tasks.fetch_add(1, Ordering::SeqCst);
+        sessions.insert(username.to_string(), session);
+        drop(sessions);
 
         emitter.emit(
             "recording-started",
@@ -205,10 +246,12 @@ impl RecorderManager {
         // merge_format is NOT captured here; read from AppState at merge time to support live changes
 
         tokio::spawn(async move {
+            let _guard = RecordingTaskGuard(Arc::clone(&manager));
             if let Err(e) = manager
                 .recording_loop(
                     &username,
                     &playlist_url,
+                    audio_playlist_url,
                     &mut session_dir,
                     stop_rx,
                     Arc::clone(&emitter),
@@ -368,23 +411,15 @@ impl RecorderManager {
                     }
                 }
             } else {
-                // 合并失败（无分片或 ffmpeg 出错）：删除孤立的 meta 文件和空会话目录，
-                // 避免 meta 永久卡在 "merging" 状态。
-                // Merge failed (no segments or ffmpeg error): delete orphaned meta file and
-                // empty session dir to prevent meta from being stuck at "merging" forever.
-                crate::recording::meta::delete_meta(&merged_path);
-                tracing::info!(
-                    "Merge produced no output for {} → deleted meta, cleaning up session dir",
-                    username_clone
-                );
-                if session_dir_clone.exists()
-                    && let Err(e) = std::fs::remove_dir_all(&session_dir_clone)
-                {
-                    tracing::warn!(
-                        "Failed to remove empty session dir {:?}: {}",
-                        session_dir_clone,
-                        e
-                    );
+                // Keep downloaded segments after a failed merge so the next launch can recover.
+                let has_segments = fs::read_dir(&session_dir_clone).ok().is_some_and(|entries|
+                    entries.flatten().any(|entry| entry.path().extension().is_some_and(|ext| ext == "ts")));
+                if has_segments {
+                    crate::recording::meta::set_status(&merged_path, "merge_error");
+                    tracing::error!("Merge failed; preserved segments in {:?}", session_dir_clone);
+                } else {
+                    crate::recording::meta::delete_meta(&merged_path);
+                    let _ = fs::remove_dir_all(&session_dir_clone);
                 }
             }
 
@@ -471,7 +506,9 @@ impl RecorderManager {
         let manager = Arc::clone(self);
         let username = username.to_string();
         let emitter = Arc::clone(emitter);
+        self.pending_tasks.fetch_add(1, Ordering::SeqCst);
         tokio::spawn(async move {
+            let _guard = RecordingTaskGuard(Arc::clone(&manager));
             manager
                 .finish_file(username, previous, emitter, duration)
                 .await;
@@ -512,22 +549,26 @@ impl RecorderManager {
     /// Recording main loop: continuously fetches HLS playlists, downloads new segments,
     /// converts to TS format, and writes to the session directory.
     /// Proxy settings and Mouflon keys are read dynamically each iteration and take effect immediately.
+    #[allow(clippy::too_many_arguments)]
     async fn recording_loop(
         self: &Arc<Self>,
         username: &str,
         playlist_url: &str,
+        mut audio_playlist_url: Option<String>,
         session_dir: &mut PathBuf,
         mut stop_rx: mpsc::Receiver<()>,
         emitter: Arc<dyn Emitter>,
     ) -> Result<()> {
         // 初始设置快照，用于检测变更 / Initial settings snapshot for change detection
         let mut last_settings = self.state.get_settings();
-        let mut api = StripchatApi::new(
+        let mut api = StreamApi::new(
             last_settings.api_proxy_url.as_deref(),
             last_settings.cdn_proxy_url.as_deref(),
             last_settings.sc_mirror_url.as_deref(),
             Arc::clone(&self.preferred_tld_by_node),
         )?
+        .with_channel(username)
+        .with_audio_playlist(playlist_url,audio_playlist_url.clone())
         .with_mouflon_keys(self.state.get_mouflon_keys())
         .with_resolution_selection(
             last_settings.preferred_resolution,
@@ -567,7 +608,7 @@ impl RecorderManager {
                 || current_settings.resolution_preference != last_settings.resolution_preference;
             let keys_changed = current_mouflon_keys != *api.mouflon_keys();
             if proxy_changed || resolution_changed || keys_changed {
-                match StripchatApi::new(
+                match StreamApi::new(
                     current_settings.api_proxy_url.as_deref(),
                     current_settings.cdn_proxy_url.as_deref(),
                     current_settings.sc_mirror_url.as_deref(),
@@ -575,6 +616,8 @@ impl RecorderManager {
                 ) {
                     Ok(new_api) => {
                         api = new_api
+                            .with_channel(username)
+                            .with_audio_playlist(&current_playlist_url,audio_playlist_url.clone())
                             .with_mouflon_keys(current_mouflon_keys)
                             .with_resolution_selection(
                                 current_settings.preferred_resolution,
@@ -681,7 +724,9 @@ impl RecorderManager {
                                         if let Some(new_url) = info.playlist_url {
                                             tracing::info!("Refreshed playlist URL → {}", username);
                                             url_prefix = get_url_prefix(&new_url);
-                                            current_playlist_url = new_url;
+                                            audio_playlist_url = info.audio_playlist_url;
+                                        api = api.with_audio_playlist(&new_url, audio_playlist_url.clone());
+                                        current_playlist_url = new_url;
                                             playlist_refresh_failures = 0;
                                             retry_count = 0;
                                             wait_next_round = false;
@@ -711,6 +756,8 @@ impl RecorderManager {
                                     if let Some(new_url) = info.playlist_url {
                                         tracing::info!("Refreshed playlist URL → {}", username);
                                         url_prefix = get_url_prefix(&new_url);
+                                        audio_playlist_url = info.audio_playlist_url;
+                                        api = api.with_audio_playlist(&new_url, audio_playlist_url.clone());
                                         current_playlist_url = new_url;
                                         playlist_refresh_failures = 0;
                                         retry_count = 0;
@@ -757,7 +804,7 @@ impl RecorderManager {
     #[allow(clippy::too_many_arguments)]
     async fn fetch_segments(
         self: &Arc<Self>,
-        api: &StripchatApi,
+        api: &StreamApi,
         playlist_url: &str,
         url_prefix: &str,
         mouflon_keys: &HashMap<String, String>,
@@ -769,6 +816,7 @@ impl RecorderManager {
         recorded_secs: &mut f64,
         emitter: &Arc<dyn Emitter>,
     ) -> Result<(usize, usize)> {
+        api.prefetch_audio(playlist_url).await?;
         let playlist = api.fetch_playlist(playlist_url).await?;
         let (segments, init_url) = parse_playlist(&playlist, url_prefix, mouflon_keys)?;
         let init_url_path = |u: &str| u.split('?').next().unwrap_or(u).to_string();
@@ -825,6 +873,14 @@ impl RecorderManager {
                             None => data,
                         };
 
+                        let fmp4 = match api.prepare_av_segment(playlist_url, segment.sequence, fmp4).await {
+                            Ok(data) => data,
+                            Err(error) => {
+                                tracing::warn!("Audio/video preparation failed → {}: {}", username, error);
+                                cdn_failures += 1;
+                                continue;
+                            }
+                        };
                         match convert_to_ts(fmp4, &ts_path).await {
                             Ok(_) => {
                                 append_to_m3u8(session_dir, &ts_path);
@@ -869,7 +925,7 @@ fn recording_limit_reached(recorded_secs: f64, limit: u64) -> bool {
 /// 检查 ffmpeg 是否在 PATH 中可用。
 /// Check if ffmpeg is available on PATH.
 pub fn ffmpeg_available() -> bool {
-    Command::new("ffmpeg")
+    Command::new(crate::core::runtime::tool("ffmpeg"))
         .arg("-version")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -888,7 +944,7 @@ async fn convert_to_ts(fmp4_data: Vec<u8>, ts_path: &PathBuf) -> Result<()> {
     let mut child = {
         #[cfg(windows)]
         {
-            tokio::process::Command::new("ffmpeg")
+            tokio::process::Command::new(crate::core::runtime::tool("ffmpeg"))
                 .creation_flags(0x08000000)
                 .args(["-y", "-i", "pipe:0", "-c", "copy", "-f", "mpegts"])
                 .arg(ts_path)
@@ -900,7 +956,7 @@ async fn convert_to_ts(fmp4_data: Vec<u8>, ts_path: &PathBuf) -> Result<()> {
         }
         #[cfg(not(windows))]
         {
-            tokio::process::Command::new("ffmpeg")
+            tokio::process::Command::new(crate::core::runtime::tool("ffmpeg"))
                 .args(["-y", "-i", "pipe:0", "-c", "copy", "-f", "mpegts"])
                 .arg(ts_path)
                 .stdin(Stdio::piped())
@@ -1044,7 +1100,7 @@ fn merge_segments(
         .block_on(FFMPEG_SEMAPHORE.acquire())
         .expect("ffmpeg semaphore closed");
 
-    let mut child = match Command::new("ffmpeg")
+    let mut child = match Command::new(crate::core::runtime::tool("ffmpeg"))
         .args(["-y", "-allowed_extensions", "ALL", "-i"])
         .arg(&m3u8_path)
         .args(["-c", "copy"])
@@ -1130,7 +1186,7 @@ fn merge_segments(
 /// 使用 ffprobe 获取视频文件的时长（秒）。
 /// Get the duration of a video file in seconds using ffprobe.
 pub fn get_video_duration(path: &std::path::Path) -> Option<u64> {
-    let output = Command::new("ffprobe")
+    let output = Command::new(crate::core::runtime::tool("ffprobe"))
         .args([
             "-v",
             "error",
@@ -1295,6 +1351,10 @@ pub fn startup_merge_leftover_segments(
             }),
         );
 
+        if video_duration_secs.is_none() {
+            crate::recording::meta::set_status(&output_path, "merge_error");
+            continue;
+        }
         if output_path.exists() {
             merged_paths.push(output_path.clone());
             if !pipeline.nodes.is_empty() {

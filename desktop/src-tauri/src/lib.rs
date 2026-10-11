@@ -14,6 +14,7 @@ mod state;
 use crate::emitter::TauriEmitter;
 use crate::state::DesktopState;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Manager;
 use stripchat_recorder_lib::{
     config::settings::{AppState, schedule_config_checks, schedule_mouflon_sync},
@@ -48,7 +49,40 @@ pub fn run() {
     let rt = Arc::new(rt);
     let rt_for_setup = Arc::clone(&rt);
 
+    let rt_for_exit = Arc::clone(&rt);
     tauri::Builder::default()
+        .menu(|app| {
+            let menu = tauri::menu::Menu::default(app)?;
+            #[cfg(target_os = "macos")]
+            {
+                // The native macOS predefined Quit calls NSApplication.terminate directly,
+                // bypassing ExitRequested. Replace it with a routed menu command.
+                let items = menu.items()?;
+                if let Some(tauri::menu::MenuItemKind::Submenu(app_menu)) = items.first() {
+                    if let Some(last) = app_menu.items()?.len().checked_sub(1) {
+                        app_menu.remove_at(last)?;
+                    }
+                    let quit = tauri::menu::MenuItem::with_id(
+                        app, "safe-quit", "退出 STR Recorder", true, Some("CmdOrCtrl+Q")
+                    )?;
+                    app_menu.append(&quit)?;
+                }
+            }
+            Ok(menu)
+        })
+        .on_menu_event(|app, event| {
+            if event.id().as_ref() == "safe-quit" { app.exit(1); }
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if let Some(state) = window.app_handle().try_state::<DesktopState>() {
+                    if !state.exit_ready.load(Ordering::SeqCst) {
+                        api.prevent_close();
+                        window.app_handle().exit(1);
+                    }
+                }
+            }
+        })
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             // 已有实例在运行时，把主窗口拉到前台并聚焦
             // When another instance is launched, bring the existing window to front
@@ -116,8 +150,35 @@ pub fn run() {
             commands::get_startup_warnings,
             commands::remove_missing_pp_results,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(move |app, event| {
+            if let tauri::RunEvent::ExitRequested { api, .. } = event {
+                let state = app.state::<DesktopState>();
+                if state.exit_ready.load(Ordering::SeqCst) { return; }
+                api.prevent_exit();
+                if state.exiting.swap(true, Ordering::SeqCst) { return; }
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.set_title("正在完成录制并退出…");
+                }
+                let app_state = Arc::clone(&state.app_state);
+                let recorder = Arc::clone(&state.recorder);
+                let startup_done = Arc::clone(&state.startup_done);
+                let app = app.clone();
+                rt_for_exit.spawn(async move {
+                    recorder.shutdown().await;
+                    while !startup_done.load(Ordering::SeqCst) {
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    }
+                    while !app_state.pp_tasks.read().is_empty() {
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    }
+                    tracing::info!("Desktop shutdown completed; recordings finalized");
+                    app.state::<DesktopState>().exit_ready.store(true, Ordering::SeqCst);
+                    app.exit(0);
+                });
+            }
+        });
 
     // runtime 在此处 drop，应用退出时所有后台任务自然终止。
     // Runtime is dropped here; all background tasks terminate naturally on exit.
@@ -138,6 +199,23 @@ pub fn run() {
 /// 2. Background initialization (async, non-blocking): time-consuming leftover segment
 ///    merging runs in the background after the window is shown.
 async fn setup_app(app_handle: tauri::AppHandle) {
+    let data = app_handle.path().app_data_dir().expect("Application Support path unavailable");
+    let resources = app_handle.path().resource_dir().expect("Resource directory unavailable").join("resources");
+    stripchat_recorder_lib::core::runtime::initialize(data.clone(), resources.join("bin"))
+        .expect("Cannot create application data directory");
+    let modules = data.join("modules");
+    std::fs::create_dir_all(&modules).expect("Cannot create modules directory");
+    if let Ok(entries) = std::fs::read_dir(resources.join("modules")) {
+        for entry in entries.flatten() {
+            let destination = modules.join(entry.file_name());
+            if !destination.exists() && entry.path().is_file() {
+                if let Err(error) = std::fs::copy(entry.path(), &destination) {
+                    eprintln!("Could not install module: {error}");
+                }
+            }
+        }
+    }
+    let startup_done = Arc::new(AtomicBool::new(false));
     // 初始化日志 / Initialize logging
     let log_dir = AppState::log_dir();
     if let Err(e) = stripchat_recorder_lib::core::logging::init_logging(&log_dir) {
@@ -204,6 +282,9 @@ async fn setup_app(app_handle: tauri::AppHandle) {
 
     // 将 DesktopState 注册为 Tauri 托管状态 / Register DesktopState as Tauri-managed state
     app_handle.manage(DesktopState {
+        exit_ready: AtomicBool::new(false),
+        exiting: AtomicBool::new(false),
+        startup_done: Arc::clone(&startup_done),
         app_state: Arc::clone(&app_state),
         recorder: Arc::clone(&recorder),
         monitor: Arc::clone(&monitor),
@@ -283,6 +364,7 @@ async fn setup_app(app_handle: tauri::AppHandle) {
                 &emitter_blocking,
                 &recorder_blocking,
             );
+            startup_done.store(true, Ordering::SeqCst);
         });
         // 注意：此处不 .await，让合并在后台异步进行
         // Note: no .await here — merging proceeds asynchronously in the background

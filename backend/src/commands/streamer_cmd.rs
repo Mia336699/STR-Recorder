@@ -8,7 +8,7 @@ use crate::core::error::Result;
 use crate::streaming::monitor::StatusMonitor;
 use crate::recording::recorder::RecorderManager;
 use crate::config::settings::AppState;
-use crate::streaming::stripchat::StripchatApi;
+use crate::streaming::platform::StreamApi;
 use std::sync::Arc;
 
 /// 主播条目（序列化后返回给前端）/ Streamer entry (serialized and returned to the frontend)
@@ -66,13 +66,13 @@ pub async fn add_streamer(
     username: String,
     state: &Arc<AppState>,
 ) -> Result<()> {
-    let username = username.trim().to_lowercase();
+    let settings = state.get_settings();
+    let username = crate::streaming::identity::normalize_with_mirror(&username, settings.sc_mirror_url.as_deref())?;
     if username.is_empty() {
         return Err("用户名不能为空".into());
     }
 
-    let settings = state.get_settings();
-    let api = StripchatApi::new_api_only(
+    let api = StreamApi::new_api_only(
         settings.api_proxy_url.as_deref(),
         settings.cdn_proxy_url.as_deref(),
         settings.sc_mirror_url.as_deref(),
@@ -124,11 +124,11 @@ pub async fn start_recording(
     monitor: &Arc<StatusMonitor>,
     emitter: &Arc<dyn crate::core::emitter::Emitter>,
 ) -> Result<String> {
-    let playlist_url = if let Some(url) = monitor.get_cached_playlist_url(&username) {
+    let (playlist_url, audio_url) = if let Some(url) = monitor.get_cached_playlist_url(&username) {
         url
     } else {
         let settings = state.get_settings();
-        let api = StripchatApi::new_api_only(
+        let api = StreamApi::new_api_only(
             settings.api_proxy_url.as_deref(),
             settings.cdn_proxy_url.as_deref(),
             settings.sc_mirror_url.as_deref(),
@@ -140,11 +140,12 @@ pub async fn start_recording(
         );
         let info = api.get_stream_info(&username, true).await?;
         info.playlist_url
+            .map(|url| (url,info.audio_playlist_url))
             .ok_or_else(|| crate::core::error::AppError::StreamOffline(username.clone()))?
     };
 
     recorder
-        .start_recording_with_emitter(&username, &playlist_url, Arc::clone(emitter))
+        .start_recording_with_audio(&username, &playlist_url, audio_url, Arc::clone(emitter))
         .await
 }
 
@@ -167,7 +168,7 @@ pub async fn verify_streamer(
     state: &Arc<AppState>,
 ) -> Result<serde_json::Value> {
     let settings = state.get_settings();
-    let api = StripchatApi::new_api_only(
+    let api = StreamApi::new_api_only(
         settings.api_proxy_url.as_deref(),
         settings.cdn_proxy_url.as_deref(),
         settings.sc_mirror_url.as_deref(),

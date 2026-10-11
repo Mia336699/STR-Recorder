@@ -9,7 +9,7 @@
 use super::state::{RelayManager, RelayStreamState};
 use crate::config::settings::AppState;
 use crate::recording::hls::{get_url_prefix, parse_playlist};
-use crate::streaming::stripchat::StripchatApi;
+use crate::streaming::platform::StreamApi;
 use std::collections::HashSet;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -125,13 +125,14 @@ async fn worker_loop(
         }
 
         let settings = app_state.get_settings();
-        let api = match StripchatApi::new_api_only(
+        let api = match StreamApi::new_api_only(
             settings.api_proxy_url.as_deref(),
             settings.cdn_proxy_url.as_deref(),
             settings.sc_mirror_url.as_deref(),
         ) {
             Ok(a) => Arc::new(
-                a.with_mouflon_keys(app_state.get_mouflon_keys())
+                a.with_channel(&username)
+                    .with_mouflon_keys(app_state.get_mouflon_keys())
                     .with_resolution_selection(
                         settings.preferred_resolution,
                         &settings.resolution_preference,
@@ -214,7 +215,7 @@ async fn feed_offline(
 ) -> bool {
     let drawtext = build_drawtext(username, status_text);
 
-    let mut src = match tokio::process::Command::new("ffmpeg")
+    let mut src = match tokio::process::Command::new(crate::core::runtime::tool("ffmpeg"))
         .args([
             "-y",
             "-re",
@@ -265,12 +266,13 @@ async fn feed_offline(
             _ = upstream_interval.tick(), if app_state.is_some() => {
                 if let Some(state) = app_state {
                     let settings = state.get_settings();
-                    if let Ok(api) = StripchatApi::new_api_only(
+                    if let Ok(api) = StreamApi::new_api_only(
                         settings.api_proxy_url.as_deref(),
                         settings.cdn_proxy_url.as_deref(),
                         settings.sc_mirror_url.as_deref(),
                     ) {
                         let api = api
+                            .with_channel(username)
                             .with_mouflon_keys(state.get_mouflon_keys())
                             .with_resolution_selection(
                                 settings.preferred_resolution,
@@ -323,13 +325,12 @@ async fn feed_live(
 ) -> bool {
     // converter: fMP4 pipe:0 → MPEG-TS pipe:1，直接广播给播放器
     // -probesize / -analyzeduration 最小化，减少首帧延迟
-    let mut converter = match tokio::process::Command::new("ffmpeg")
+    let mut converter = match tokio::process::Command::new(crate::core::runtime::tool("ffmpeg"))
         .args([
             "-y",
-            "-probesize", "32",
+            "-probesize", "32768",
             "-analyzeduration", "0",
             "-copyts",
-            "-f", "mp4",
             "-i", "pipe:0",
             "-c", "copy",
             "-f", "mpegts",
@@ -377,12 +378,13 @@ async fn feed_live(
     });
 
     let mut last_settings = app_state.get_settings();
-    let mut api = match StripchatApi::new_api_only(
+    let mut api = match StreamApi::new_api_only(
         last_settings.api_proxy_url.as_deref(),
         last_settings.cdn_proxy_url.as_deref(),
         last_settings.sc_mirror_url.as_deref(),
     ) {
         Ok(a) => a
+            .with_channel(username)
             .with_mouflon_keys(app_state.get_mouflon_keys())
             .with_resolution_selection(
                 last_settings.preferred_resolution,
@@ -423,13 +425,14 @@ async fn feed_live(
             != last_settings.preferred_resolution
             || current_settings.resolution_preference != last_settings.resolution_preference;
         if proxy_changed || resolution_changed || current_mouflon_keys != last_mouflon_keys {
-            if let Ok(new_api) = StripchatApi::new_api_only(
+            if let Ok(new_api) = StreamApi::new_api_only(
                 current_settings.api_proxy_url.as_deref(),
                 current_settings.cdn_proxy_url.as_deref(),
                 current_settings.sc_mirror_url.as_deref(),
             ) {
                 api = new_api
-                    .with_mouflon_keys(current_mouflon_keys.clone())
+                    .with_channel(username)
+            .with_mouflon_keys(current_mouflon_keys.clone())
                     .with_resolution_selection(
                         current_settings.preferred_resolution,
                         &current_settings.resolution_preference,
@@ -489,7 +492,7 @@ async fn feed_live(
 
 #[allow(clippy::too_many_arguments)]
 async fn poll_and_feed(
-    api: &StripchatApi,
+    api: &StreamApi,
     username: &str,
     playlist_url: &str,
     url_prefix: &str,
@@ -500,6 +503,7 @@ async fn poll_and_feed(
 ) -> Result<bool, String> {
     let mouflon_keys = api.mouflon_keys();
 
+    api.prefetch_audio(playlist_url).await.map_err(|e| e.to_string())?;
     let playlist_text = api.fetch_playlist(playlist_url).await
         .map_err(|e| e.to_string())?;
 
@@ -545,6 +549,8 @@ async fn poll_and_feed(
             None => seg_bytes,
         };
 
+        let fmp4 = api.prepare_av_segment(playlist_url, seg.sequence, fmp4).await
+            .map_err(|e| e.to_string())?;
         if fmp4_tx.send(fmp4).await.is_err() {
             return Err("converter stdin channel closed".to_string());
         }

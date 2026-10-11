@@ -1,40 +1,49 @@
 {
-	"productName": "StripchatRecorder",
-	"version": "0.3.5",
-	"identifier": "com.chantrail.stripchat-recorder",
-	"build": {
-		"beforeDevCommand": "npm run dev",
-		"devUrl": "http://localhost:1420",
-		"beforeBuildCommand": "npm run build",
-		"frontendDist": "../dist"
-	},
-	"app": {
-		"withGlobalTauri": false,
-		"windows": [
-			{
-				"title": "StripchatRecorder",
-				"width": 1600,
-				"height": 600,
-				"minWidth": 1600,
-				"minHeight": 600,
-				"resizable": true,
-				"fullscreen": false,
-				"visible": false
-			}
-		],
-		"security": {
-			"csp": null
-		}
-	},
-	"bundle": {
-		"active": true,
-		"targets": "all",
-		"icon": [
-			"icons/32x32.png",
-			"icons/128x128.png",
-			"icons/128x128@2x.png",
-			"icons/icon.icns",
-			"icons/icon.ico"
-		]
-	}
+  "productName": "STR Recorder",
+  "version": "0.3.5",
+  "identifier": "com.mia.str-recorder",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "title": "STR Recorder — Stripchat / Chaturbate",
+        "width": 1280,
+        "height": 780,
+        "minWidth": 980,
+        "minHeight": 600,
+        "resizable": true,
+        "fullscreen": false,
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "app",
+      "dmg"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": [
+      "resources/"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "26.0"
+    }
+  }
 }

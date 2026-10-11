@@ -17,6 +17,9 @@ use stripchat_recorder_lib::{
 /// Tauri 托管的全局应用状态。
 /// Tauri-managed global application state.
 pub struct DesktopState {
+    pub exit_ready: std::sync::atomic::AtomicBool,
+    pub exiting: std::sync::atomic::AtomicBool,
+    pub startup_done: Arc<std::sync::atomic::AtomicBool>,
     /// 应用业务状态 / Application business state
     pub app_state: Arc<AppState>,
     /// 录制管理器 / Recorder manager

@@ -46,6 +46,8 @@
 
 	const thumbnailSrc = computed(() => props.streamer.thumbnail_url ?? null);
 	const fastThumbnail = useFastThumbnail(thumbnailSrc);
+	const thumbnailFailed = ref(false);
+	watch(fastThumbnail, () => { thumbnailFailed.value = false; });
 
 	function onAutoChange(val: boolean) {
 		autoRecord.value = val;
@@ -57,6 +59,8 @@
 		if (s.status === "公开秀") return "bg-green-900 text-green-300 border-transparent";
 		return "bg-amber-900 text-amber-300 border-transparent";
 	}
+	const displayName = computed(() => props.streamer.username.replace(/^chaturbate~/, ""));
+	const platformName = computed(() => props.streamer.username.startsWith("chaturbate~") ? "Chaturbate" : "Stripchat");
 </script>
 
 <template>
@@ -69,8 +73,11 @@
 	>
 		<div class="relative aspect-video bg-muted overflow-hidden">
 			<img
-				v-if="fastThumbnail"
+				v-if="fastThumbnail && !thumbnailFailed"
+				:key="fastThumbnail"
 				:src="fastThumbnail"
+				:alt="displayName"
+				@error="thumbnailFailed = true"
 				loading="lazy"
 				class="w-full h-full object-cover"
 			/>
@@ -78,7 +85,7 @@
 				v-else
 				class="w-full h-full flex items-center justify-center text-4xl font-bold text-muted-foreground/20"
 			>
-				{{ streamer.username[0].toUpperCase() }}
+				{{ displayName[0]?.toUpperCase() }}
 			</div>
 			<Circle
 				v-if="streamer.is_recording"
@@ -88,7 +95,8 @@
 
 		<CardContent class="p-3 flex flex-col gap-2">
 			<div class="flex items-center justify-between">
-				<span class="font-semibold text-sm truncate">{{ streamer.username }}</span>
+				<span class="font-semibold text-sm truncate">{{ displayName }}</span>
+				<span class="text-xs text-muted-foreground">{{ platformName }}</span>
 				<Button
 					variant="ghost"
 					size="icon"

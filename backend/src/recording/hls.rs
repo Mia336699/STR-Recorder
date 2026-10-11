@@ -44,6 +44,29 @@ pub fn parse_playlist(
     url_prefix: &str,
     mouflon_keys: &HashMap<String, String>,
 ) -> Result<(Vec<HlsSegment>, Option<String>)> {
+    if !playlist.trim_start().starts_with("#EXTM3U") {
+        return Err(AppError::Other("Invalid HLS media playlist".into()));
+    }
+    let base = reqwest::Url::parse(&format!("{}/", url_prefix.trim_end_matches('/')))
+        .map_err(|e| AppError::Other(format!("Invalid HLS base URL: {e}")))?;
+    let resolve = |path: &str| -> Result<String> {
+        let url = base
+            .join(path)
+            .map_err(|e| AppError::Other(e.to_string()))?;
+        if !matches!(url.scheme(), "http" | "https") {
+            return Err(AppError::Other("Unsupported HLS URL scheme".into()));
+        }
+        Ok(url.into())
+    };
+    let media_sequence = playlist
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("#EXT-X-MEDIA-SEQUENCE:"))
+        .map(|value| {
+            value
+                .parse::<u32>()
+                .map_err(|e| AppError::Other(format!("Invalid HLS sequence: {e}")))
+        })
+        .transpose()?;
     let mut segments = Vec::new();
     let mut mp4_header_url = None;
     let mut current_pkey: Option<&str> = None;
@@ -52,6 +75,24 @@ pub fn parse_playlist(
     let lines: Vec<&str> = playlist.lines().collect();
 
     for (i, line) in lines.iter().enumerate() {
+        let line = line.trim();
+        if line.starts_with("#EXT-X-KEY:")
+            && !line.split(',').any(|attr| {
+                attr.trim()
+                    .strip_prefix("#EXT-X-KEY:")
+                    .unwrap_or(attr.trim())
+                    == "METHOD=NONE"
+            })
+        {
+            return Err(AppError::Other(
+                "Encrypted HLS media is not supported".into(),
+            ));
+        }
+        if line.starts_with("#EXT-X-BYTERANGE:")
+            || (line.starts_with("#EXT-X-MAP:") && line.contains("BYTERANGE="))
+        {
+            return Err(AppError::Other("Byte-range HLS is not supported".into()));
+        }
         if let Some(value) = line.strip_prefix("#EXTINF:") {
             duration_secs = value
                 .split(',')
@@ -79,11 +120,7 @@ pub fn parse_playlist(
             && let Some(end) = line[start + 1..].find('"')
         {
             let header_path = &line[start + 1..start + 1 + end];
-            mp4_header_url = Some(if header_path.starts_with("http") {
-                header_path.to_string()
-            } else {
-                format!("{}/{}", url_prefix, header_path)
-            });
+            mp4_header_url = Some(resolve(header_path)?);
         }
 
         if line.is_empty() || line.starts_with('#') {
@@ -115,13 +152,21 @@ pub fn parse_playlist(
             } else {
                 encoded_url
             }
-        } else if line.starts_with("http") {
-            line.to_string()
         } else {
-            format!("{}/{}", url_prefix, line)
+            resolve(line)?
         };
 
-        let sequence = extract_sequence(&url).unwrap_or(segments.len() as u32);
+        // Standard sequence numbers work even when CDN filenames are hashes or timestamps.
+        // Preserve Stripchat's Mouflon filename sequence convention.
+        let sequence = if mouflon_uri_line.is_some() {
+            extract_sequence(&url).unwrap_or(segments.len() as u32)
+        } else if let Some(first) = media_sequence {
+            first
+                .checked_add(segments.len() as u32)
+                .ok_or_else(|| AppError::Other("HLS sequence overflow".into()))?
+        } else {
+            extract_sequence(&url).unwrap_or(segments.len() as u32)
+        };
         segments.push(HlsSegment {
             url,
             sequence,
@@ -189,4 +234,58 @@ fn extract_sequence(url: &str) -> Option<u32> {
     let last = parts.last()?;
     let num_str = last.split('.').next()?;
     num_str.parse().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn sliding_windows_use_media_sequence_and_resolve_paths() {
+        let text = "#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:105\n#EXT-X-MAP:URI=\"../init.mp4?t=x\"\n#EXTINF:2,\n../hash.ts?t=1\n#EXTINF:3,\n//cdn.test/other.ts\n";
+        let (segments, init) =
+            parse_playlist(text, "https://cdn.test/live/quality", &HashMap::new()).unwrap();
+        assert_eq!(segments[0].sequence, 105);
+        assert_eq!(segments[1].sequence, 106);
+        assert_eq!(segments[0].url, "https://cdn.test/live/hash.ts?t=1");
+        assert_eq!(segments[1].url, "https://cdn.test/other.ts");
+        assert_eq!(init.unwrap(), "https://cdn.test/live/init.mp4?t=x");
+        assert_eq!(segments[1].duration_secs, 3.0);
+        let next = text.replace("SEQUENCE:105", "SEQUENCE:106");
+        assert_eq!(
+            parse_playlist(&next, "https://cdn.test/live/quality", &HashMap::new())
+                .unwrap()
+                .0[0]
+                .sequence,
+            106
+        );
+    }
+    #[test]
+    fn rejects_invalid_encrypted_and_range_media() {
+        for text in [
+            "<html>Denied</html>",
+            "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"key\"\n1.ts",
+            "#EXTM3U\n#EXT-X-BYTERANGE:200@0\n1.ts",
+        ] {
+            assert!(parse_playlist(text, "https://cdn.test/live", &HashMap::new()).is_err());
+        }
+        assert!(
+            parse_playlist(
+                "#EXTM3U\n#EXT-X-KEY:METHOD=NONE\n1.ts",
+                "https://cdn.test/live",
+                &HashMap::new()
+            )
+            .is_ok()
+        );
+    }
+    #[test]
+    fn keeps_stripchat_mouflon_sequences() {
+        let text = "#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:1\n#EXTINF:2,\n#EXT-X-MOUFLON:URI:https://cdn.test/stream_x_456.mp4\nplaceholder.mp4";
+        assert_eq!(
+            parse_playlist(text, "https://cdn.test/live", &HashMap::new())
+                .unwrap()
+                .0[0]
+                .sequence,
+            456
+        );
+    }
 }

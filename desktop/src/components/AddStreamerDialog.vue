@@ -1,11 +1,11 @@
 <!--
     添加主播对话框组件 / Add Streamer Dialog Component
 
-    提供一个模态对话框，允许用户通过输入 Stripchat 用户名来添加新主播到追踪列表。
+    提供一个模态对话框，允许用户通过输入直播平台用户名来添加新主播到追踪列表。
     提交时调用 streamersStore.addStreamer 并通过 toast 反馈操作结果。
 
     Provides a modal dialog for users to add a new streamer to the tracking list
-    by entering their Stripchat username. Calls streamersStore.addStreamer on submit
+    by entering a room username or URL. Calls streamersStore.addStreamer on submit
     and provides toast feedback for the operation result.
 
     Emits:
@@ -37,20 +37,16 @@
 	const loading = ref(false);
 
 	/**
-	 * 从输入中提取用户名：支持直接输入用户名、stripchat.com 链接或 mirror 链接。
-	 * Extract username from input: supports plain username, stripchat.com URL, or mirror URL.
+	 * 选择平台或保留房间链接，让后端统一识别频道。
+	 * Select a platform or preserve the room URL for backend identity validation.
 	 */
+	const platform = ref("stripchat");
+
 	function extractUsername(input: string): string {
-		const trimmed = input.trim();
-		try {
-			const url = new URL(trimmed.startsWith("http") ? trimmed : `https://${trimmed}`);
-			// 匹配 stripchat.com 或任意 mirror 域名下的 /<username> 路径
-			const parts = url.pathname.split("/").filter(Boolean);
-			if (parts.length > 0) return parts[0];
-		} catch {
-			// 不是 URL，直接当用户名
-		}
-		return trimmed;
+		const trimmed = input.trim().toLowerCase();
+		// Keep URLs intact: the backend validates the host and resolves the platform.
+		if (trimmed.includes("://") || trimmed.startsWith("chaturbate~")) return trimmed;
+		return platform.value === "chaturbate" ? `chaturbate~${trimmed}` : trimmed;
 	}
 
 	/**
@@ -83,6 +79,11 @@
 
 			<form @submit.prevent="submit" class="flex flex-col gap-4 py-2">
 				<div class="flex flex-col gap-2">
+					<Label for="platform">{{ t("addStreamer.platform") }}</Label>
+					<select id="platform" v-model="platform" :disabled="loading" class="border rounded-md p-2 bg-background text-sm">
+						<option value="stripchat">Stripchat</option>
+						<option value="chaturbate">Chaturbate</option>
+					</select>
 					<Label for="username">{{ t("addStreamer.label") }}</Label>
 				<Input
 						id="username"

@@ -1,198 +1,52 @@
-# StripchatRecorder
+# STR Recorder
 
-[简体中文](README.md) | [English](README.en.md)
+![STR Recorder icon](assets/str-recorder-merged-logo-v1.png)
 
-自托管的 Stripchat 直播录制工具，提供基于 Web 的管理界面，支持自动录制、后处理流水线和多渠道通知。
+面向 Apple Silicon Mac 的独立直播录制桌面应用，基于 [ChanTrail/StripchatRecorder](https://github.com/ChanTrail/StripchatRecorder) 二次开发。支持 Stripchat 与 Chaturbate 公开直播，保留原有录制、自动监测与后处理功能。
 
-[![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](https://www.gnu.org/licenses/old-licenses/gpl-3.0.html)
-[![Docker Image](https://img.shields.io/docker/pulls/chantrail/stripchat-recorder)](https://hub.docker.com/r/chantrail/stripchat-recorder)
+## 安装
 
----
+在本仓库 Releases 下载 `STR-Recorder-0.3.5-Chaturbate-merged-logo-arm64.dmg`，将 STR Recorder 拖到 Applications 后启动。
 
-## 功能特性
+- Apple Silicon，macOS 26 或以上；暂不支持 Intel Mac。
+- 随包提供 FFmpeg、ffprobe 和四个后处理模块，运行时不需要 Node.js、Rust、Homebrew 或网页服务。
+- 首次启动选择自己的录制目录，在添加主播时选择平台，或直接粘贴公开房间链接。
+- 当前构建使用本地 ad-hoc 签名，尚未进行 Apple Developer ID 签名和公证。
 
-- 监控多个主播，上线时自动开始录制
-- Web UI 管理主播、录制文件和后处理任务
-- **主播查找**：通过 [camgirlfinder.net](https://camgirlfinder.net) 查找主播，支持：
-  - 人脸识别搜索：上传图片自动检测人脸，找出相似主播
-  - 名字搜索：按用户名关键词搜索
-  - 从结果卡片直接一键添加到录制列表
-  - 对任意主播发起相似人脸搜索
-- **转发流（HLS Relay）**：无需录制即可将主播直播流转发给播放器，访问 `/stream/{modelname}` 自动启动，支持多客户端同时连接
-- 支持分离式网络代理：可分别配置 Stripchat API 代理与 CDN 分片代理
-- 支持配置 Stripchat 镜像站（将请求中的 `stripchat.com` 替换为镜像域名）
-- **Mouflon HLS 解密**：支持管理 `pkey → pdkey` 密钥对，用于解密 Stripchat 加密的 HLS 分片文件名；支持配置同步 URL 自动拉取最新密钥
-- 可配置的后处理流水线，支持插件化模块：
-  - **contact_sheet** — 生成带时间戳的缩略图预览图
-  - **filter_short** — 删除低于最短时长的录制文件
-  - **notify_discord** — 通过 Discord Webhook 发送录制信息和封面图
-  - **notify_telegram** — 通过 MTProto 发送录制信息、封面图和视频（支持超过 2 GB 的大文件，支持 HTTP/SOCKS5 代理）
-- 录制文件页磁盘空间监控，剩余空间不足 5 GB 时高亮提示
-- 双运行模式：可作为 Tauri 桌面应用或无头服务器通过浏览器访问
-- 基于 SSE 的实时 UI 更新，支持多客户端同步
-- 跟随系统主题的深色/浅色模式
-- 支持自定义界面语言，详见[自定义语言文档](docs/custom-locale.md)
+## 功能
 
----
+- Stripchat 原有录制功能与 Chaturbate 公开房间录制。
+- 手动录制与上线自动录制，支持首选分辨率、分段和停止后的合并。
+- Chaturbate 独立音视频 HLS 轨道复用，平台同名主播使用独立文件夹。
+- 卡片缩略图使用当前站点 CDN，图片失败时显示占位并在更新后重试。
+- 通过 ⌘Q、应用菜单或关闭主窗口退出时，等待录制停止、合并和后处理完成。
+- 合并失败保留源分片，启动时恢复未完成的录制。
+- 分开配置 API 和 CDN 代理；Stripchat 镜像设置继续仅影响 Stripchat。
 
-## 快速开始（Docker）
-
-### docker-compose（推荐）
-
-```yaml
-services:
-  stripchat-recorder:
-    image: chantrail/stripchat-recorder:latest
-    container_name: stripchat-recorder
-    restart: unless-stopped
-    environment:
-      - TZ=Asia/Shanghai
-      # - LANGUAGE=en-US  # 设置界面语言，支持 zh-CN（默认）或 en-US
-      # - PORT=3030        # 设置服务端口（默认 3030）
-    ports:
-      - "${PORT:-3030}:${PORT:-3030}"
-    volumes:
-      - ./data/logs:/app/stripchat-recorder/logs
-      - ./data/recordings:/app/stripchat-recorder/recordings
-      - ./data/modules:/app/stripchat-recorder/modules
-      - ./data/config:/app/stripchat-recorder/config
-```
-
-```bash
-docker compose up -d
-```
-
-启动后在浏览器中打开 `http://localhost:3030`。
-
-Docker 镜像默认以 Server 模式运行（端口 3030），配置写入挂载的 `config/settings.json`。
-
-### 主要设置项
-
-在 Web UI 的「设置」页面可配置以下选项：
-
-| 设置项                   | 说明                                                                 |
-| ------------------------ | -------------------------------------------------------------------- |
-| 输出目录                 | 录制文件保存路径                                                     |
-| 最大并发录制数           | 同时录制的最大主播数，`0` 表示不限制                                 |
-| 轮询间隔                 | 检查主播是否上线的间隔（秒），范围 10–300                            |
-| 首选录制分辨率         | 设置目标分辨率和回退方向（优先较低或较高）；若该方向没有可用流，则使用反方向最接近的画质而不会失败；默认为原始/最高画质 |
-| 合并格式                 | 录制结束后自动合并分片的格式：`mp4`（默认）、`mkv`、`ts`            |
-| 上线自动录制             | 新添加的主播是否默认开启自动录制                                     |
-| 后处理临时目录最大占用   | 后处理模块运行时产生的临时文件上限（GB），超出后自动删除最旧的文件，`0` 表示不限制，默认 50 GB |
-
-### 网络代理与镜像站
-
-在设置页的「网络」中可分别配置：
-
-Stripchat 镜像站项目：<https://github.com/ChanTrail/StripchatMirror>
-
-1. API 代理：用于访问 Stripchat API；若同时填写镜像站，则通过该代理访问镜像站。
-2. CDN 代理：用于下载直播分片流，可与 API 代理分开设置。
-3. Stripchat 镜像站：用于替换请求中的 `stripchat.com` 域名。
-
-### Mouflon HLS 解密密钥
-
-Stripchat 对 HLS 分片文件名进行了加密（Mouflon 系统）。若录制时遇到无法下载分片的情况，需在设置页的「Mouflon 解密密钥」中填入对应的 `pkey → pdkey` 密钥对。密钥可从社区渠道获取。
-
-也可以配置「同步地址」和「同步令牌」，从指定 URL 自动拉取最新密钥。
-
-### 转发流（HLS Relay）
-
-在 Server 模式下，无需将主播添加到录制列表，直接用播放器打开以下地址即可播放直播：
-
-```
-http://localhost:3030/stream/{modelname}
-```
-
-首次访问时自动连接上游，支持多个客户端同时连接同一转发流。在 Web UI 的「转发流」页面可查看所有活跃会话的状态、连接数和运行时长。
-
-### docker run
-
-```bash
-docker run -d \
-  --name stripchat-recorder \
-  --restart unless-stopped \
-  -e TZ=Asia/Shanghai \
-  -e LANGUAGE=en-US \
-  -e PORT=3030 \
-  -p 3030:3030 \
-  -v ./data/logs:/app/stripchat-recorder/logs \
-  -v ./data/recordings:/app/stripchat-recorder/recordings \
-  -v ./data/modules:/app/stripchat-recorder/modules \
-  -v ./data/config:/app/stripchat-recorder/config \
-  chantrail/stripchat-recorder:latest
-```
-
----
-
-## 后处理模块
-
-模块是实现了简单协议的独立可执行文件，通过环境变量接收输入，通过标准输出与主程序通信。
-
-### 内置模块
-
-| 模块              | 说明                                                |
-| ----------------- | --------------------------------------------------- |
-| `contact_sheet`   | 按配置间隔截帧并拼合为预览图                        |
-| `filter_short`    | 删除低于最短时长的录制文件                          |
-| `notify_discord`  | 通过 Discord Webhook 发送录制信息和封面图           |
-| `notify_telegram` | 通过 MTProto 向 Telegram 发送录制信息、封面图和视频 |
-
-将自定义模块放入 `modules` 数据卷目录后会被自动发现，且不会在容器重启时被覆盖。详见[后处理模块开发文档](docs/module-development.md)。
-
----
+仅处理无需登录即可访问的公开直播；私密、付费、密码房间以及访问验证不会绕过。
 
 ## 从源码构建
 
-**前置依赖：** Rust、Node.js (LTS)、ffmpeg
+需要 Apple Silicon Mac、Xcode Command Line Tools、Rust stable、Node.js 22 和 Homebrew FFmpeg。FFmpeg 的最低系统版本必须与打包目标一致；当前发布目标为 macOS 26。
 
-### 首次启动配置
-
-直接运行二进制文件时，若 `config/settings.json` 中尚未配置运行模式，会自动进入命令行 TUI 引导配置：
-
-1. 选择界面语言（中文 / English）
-2. 选择运行模式（Desktop 桌面端 / Server 服务器端）
-3. Server 模式下输入监听端口（默认 3030）
-
-配置完成后写入 `config/settings.json`，下次启动直接读取，不再弹出配置界面。
-
-```bash
-# 安装前端依赖
-npm install
-
-# 构建前端 + Tauri 二进制
-npm run build
-npx tauri build --no-bundle
-
-# 构建后处理模块
-for dir in modules/*/; do
-  [ -f "$dir/Cargo.toml" ] && cargo build --manifest-path "$dir/Cargo.toml" --release --bins
-done
+```sh
+npm ci --prefix desktop
+scripts/package-macos.sh
 ```
 
-### 构建 Docker 镜像
+安装包输出到 `build/desktop-macos/`。构建脚本将 FFmpeg 和依赖库放入应用资源，重写动态库路径并进行本地签名。用户配置与日志位于 `~/Library/Application Support/com.mia.str-recorder/`，更新应用不会覆盖用户数据。
 
-```bash
-docker build -t chantrail/stripchat-recorder .
+## 验证
+
+```sh
+npm run build --prefix desktop
+cargo test --release --manifest-path backend/Cargo.toml --lib --test public_hls_recording -- --include-ignored
 ```
 
----
+显式媒体测试需要 FFmpeg 和 ffprobe。2026-10-11 的本机验收完成 12 项测试、约 41.5 秒 Chaturbate 1080p H.264/AAC 公开直播录制及完整解码，并验证退出合并和启动恢复。融合图标已生成 macOS 多尺寸 ICNS；安装包经过签名与磁盘映像校验。未完成长时间压力测试或通知发送测试。
 
-## 技术栈
+技术说明见 [Chaturbate 适配](docs/CHATABURATE.md) 和 [macOS 安装说明](docs/MACOS.md)。
 
-- **前端：** Vue 3, TypeScript, Vite, Tailwind CSS, Reka UI
-- **后端 / 桌面端：** Rust, Tauri 2
-- **后处理模块：** Rust（独立二进制）
-- **容器：** Debian, ffmpeg
+## 来源与许可
 
----
-
-## 开源许可证
-
-本项目基于 [GNU 通用公共许可证 v3.0](https://www.gnu.org/licenses/old-licenses/gpl-3.0.html) 发布。
-
----
-
-## 免责声明
-
-本项目仅用于技术研究与学习交流。使用者需自行承担部署、运维与合规风险。
+基于上游提交 `7519a9314e9e50e9ce17774299d9f76c7f5d8347`（0.3.5）。项目遵循 [GPL-3.0](LICENSE)，保留原作者署名与源码历史。内置 FFmpeg 的许可和构建来源包含在应用资源中的 `licenses/`。本仓库是二次开发版本，不代表上游官方发布。

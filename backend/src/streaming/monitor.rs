@@ -11,7 +11,7 @@
 use crate::core::emitter::{Emitter, EmitterExt};
 use crate::recording::recorder::RecorderManager;
 use crate::config::settings::{AppState, StreamerData};
-use crate::streaming::stripchat::StripchatApi;
+use crate::streaming::platform::StreamApi;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -32,6 +32,8 @@ pub struct StreamerStatus {
     /// HLS 播放列表 URL（不序列化，仅供内部使用）/ HLS playlist URL (not serialized, internal use only)
     #[serde(skip)]
     pub playlist_url: Option<String>,
+    #[serde(skip)]
+    pub audio_playlist_url: Option<String>,
     /// 获取该播放列表时使用的首选分辨率 / Preferred resolution used to fetch this playlist
     #[serde(skip)]
     pub playlist_resolution: u32,
@@ -74,7 +76,7 @@ impl StatusMonitor {
 
     /// 获取指定主播缓存的 HLS 播放列表 URL（用于快速开始录制，避免重复 API 请求）。
     /// Get the cached HLS playlist URL for a streamer (for fast recording start, avoiding repeated API requests).
-    pub fn get_cached_playlist_url(&self, username: &str) -> Option<String> {
+    pub fn get_cached_playlist_url(&self, username: &str) -> Option<(String, Option<String>)> {
         let settings = self.state.get_settings();
         let prefers_higher = settings.resolution_preference == "higher";
         self.statuses
@@ -84,7 +86,7 @@ impl StatusMonitor {
                 s.playlist_resolution == settings.preferred_resolution
                     && s.playlist_prefers_higher == prefers_higher
             })
-            .and_then(|s| s.playlist_url.clone())
+            .and_then(|s| s.playlist_url.clone().map(|url| (url,s.audio_playlist_url.clone())))
     }
 
     /// 启动监控循环（通用版本，接受任意 emitter）。
@@ -147,7 +149,7 @@ impl StatusMonitor {
         }
         let streamers = self.state.get_streamers();
 
-        let candidates: Vec<(String, String)> = {
+        let candidates: Vec<(String, String, Option<String>)> = {
             let statuses = self.statuses.read();
             streamers
                 .iter()
@@ -162,7 +164,7 @@ impl StatusMonitor {
                             cached
                                 .playlist_url
                                 .as_ref()
-                                .map(|url| (s.username.clone(), url.clone()))
+                                .map(|url| (s.username.clone(), url.clone(), cached.audio_playlist_url.clone()))
                         } else {
                             None
                         }
@@ -171,14 +173,14 @@ impl StatusMonitor {
                 .collect()
         };
 
-        for (username, playlist_url) in candidates {
+        for (username, playlist_url, audio_url) in candidates {
             if self.recorder.is_recording(&username) {
                 continue;
             }
             tracing::info!("try_start_pending: auto-starting recording → {}", username);
             let _ = self
                 .recorder
-                .start_recording_with_emitter(&username, &playlist_url, Arc::clone(emitter))
+                .start_recording_with_audio(&username, &playlist_url, audio_url, Arc::clone(emitter))
                 .await;
         }
     }
@@ -198,7 +200,7 @@ impl StatusMonitor {
             None => return,
         };
 
-        let api = match StripchatApi::new(
+        let api = match StreamApi::new(
             settings.api_proxy_url.as_deref(),
             settings.cdn_proxy_url.as_deref(),
             settings.sc_mirror_url.as_deref(),
@@ -234,7 +236,7 @@ impl StatusMonitor {
             return;
         }
 
-        let api = match StripchatApi::new(
+        let api = match StreamApi::new(
             settings.api_proxy_url.as_deref(),
             settings.cdn_proxy_url.as_deref(),
             settings.sc_mirror_url.as_deref(),
@@ -282,7 +284,7 @@ impl StatusMonitor {
     /// Poll a single streamer's status, update the cache, and trigger auto-recording logic based on status changes.
     async fn poll_streamer(
         self: &Arc<Self>,
-        api: &StripchatApi,
+        api: &StreamApi,
         streamer: StreamerData,
         emitter: &Arc<dyn Emitter>,
         auto_record_global: bool,
@@ -310,6 +312,7 @@ impl StatusMonitor {
                     status: String::new(),
                     thumbnail_url: None,
                     playlist_url: None,
+                    audio_playlist_url: None,
                     playlist_resolution: api.preferred_resolution(),
                     playlist_prefers_higher: api.prefers_higher_resolution(),
                 });
@@ -343,6 +346,7 @@ impl StatusMonitor {
             status: info.status.clone(),
             thumbnail_url: info.thumbnail_url.clone(),
             playlist_url: info.playlist_url.clone(),
+            audio_playlist_url: info.audio_playlist_url.clone(),
             playlist_resolution: api.preferred_resolution(),
             playlist_prefers_higher: api.prefers_higher_resolution(),
         };
@@ -374,7 +378,7 @@ impl StatusMonitor {
             tracing::info!("Auto-starting recording → {} (just_online={}, dropped={}, natural_stop={}, should_be={})", username, just_came_online, recording_dropped, naturally_stopped, should_be_recording);
             let _ = self
                 .recorder
-                .start_recording_with_emitter(&username, playlist_url, Arc::clone(emitter))
+                .start_recording_with_audio(&username, playlist_url, info.audio_playlist_url.clone(), Arc::clone(emitter))
                 .await;
         }
     }

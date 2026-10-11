@@ -341,7 +341,8 @@ fn run_node(
     // PP_MAX_TMP_MB 以 MB 为单位传给模块（GB * 1024，向下取整）
     // Pass PP_MAX_TMP_MB to the module in MB (GB * 1024, truncated)
     let max_tmp_mb = (max_tmp_dir_gb * 1024.0) as u64;
-    cmd.env("PP_INPUT", input)
+    cmd.env("PATH", crate::core::runtime::child_path())
+        .env("PP_INPUT", input)
         .env("PP_EXE_DIR", exe_dir())
         .env("PP_MAX_TMP_MB", max_tmp_mb.to_string())
         .stdout(Stdio::piped())

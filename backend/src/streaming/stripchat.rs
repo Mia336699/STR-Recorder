@@ -30,7 +30,7 @@ const CDN_TLDS: &[&str] = &[
 
 /// 构建用于 CDN 分片下载的 HTTP 客户端（支持代理，启用 TCP keepalive）。
 /// Build an HTTP client for CDN segment downloads (supports proxy, enables TCP keepalive).
-fn build_client(proxy_url: Option<&str>) -> Result<Client> {
+pub(super) fn build_client(proxy_url: Option<&str>) -> Result<Client> {
     let mut builder = Client::builder()
         .user_agent(USER_AGENT)
         .timeout(std::time::Duration::from_secs(30))
@@ -109,6 +109,7 @@ pub struct StreamInfo {
     pub thumbnail_url: Option<String>,
     /// HLS 播放列表 URL（仅在 fetch_playlist=true 且可录制时有值）/ HLS playlist URL (only when fetch_playlist=true and recordable)
     pub playlist_url: Option<String>,
+    pub audio_playlist_url: Option<String>,
 }
 
 /// Stripchat API 客户端，封装 API 请求和 CDN 分片下载。
@@ -466,6 +467,7 @@ impl StripchatApi {
             status,
             thumbnail_url,
             playlist_url,
+            audio_playlist_url: None,
         })
     }
 
@@ -524,7 +526,7 @@ impl StripchatApi {
     /// Select a preferred resolution from a master playlist, falling upward or downward first.
     /// If no stream exists in the preferred direction, use the nearest stream in the other direction;
     /// 0 selects the highest-bandwidth stream.
-    fn parse_stream(
+    pub(crate) fn parse_stream(
         playlist: &str,
         preferred_resolution: u32,
         prefers_higher_resolution: bool,

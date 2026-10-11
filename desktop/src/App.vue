@@ -240,7 +240,7 @@
 				>
 					<span class="w-2.5 h-2.5 rounded-full bg-destructive shrink-0" />
 					<span class="text-sm font-bold text-sidebar-foreground"
-						>StripchatRecorder</span
+						>STR Recorder</span
 					>
 				</div>
 				<nav class="flex flex-col gap-0.5">
