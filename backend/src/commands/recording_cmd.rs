@@ -58,7 +58,12 @@ pub fn list_recordings_inner(
         &settings.merge_format,
     )?;
 
-    files.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+    // RFC3339 strings may use different offsets; compare actual instants, not text.
+    files.sort_by(|a, b| {
+        let a_time = chrono::DateTime::parse_from_rfc3339(&a.started_at).ok();
+        let b_time = chrono::DateTime::parse_from_rfc3339(&b.started_at).ok();
+        b_time.cmp(&a_time).then_with(|| b.name.cmp(&a.name))
+    });
     Ok(files)
 }
 
@@ -248,19 +253,5 @@ pub fn delete_recording_inner(
 /// 从文件名 stem（格式：`{name}_{YYYYMMDD}_{HHmmss}`）中解析录制开始时间。
 /// Parse the recording start time from a filename stem (format: `{name}_{YYYYMMDD}_{HHmmss}`).
 pub fn parse_timestamp_from_stem_pub(stem: &str) -> Option<String> {
-    use chrono::TimeZone;
-    let parts: Vec<&str> = stem.rsplitn(3, '_').collect();
-    if parts.len() < 2 {
-        return None;
-    }
-    let time_part = parts[0];
-    let date_part = parts[1];
-    if date_part.len() == 8 && time_part.len() == 6 {
-        let combined = format!("{}{}", date_part, time_part);
-        if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(&combined, "%Y%m%d%H%M%S") {
-            let local = chrono::Local.from_local_datetime(&dt).single()?;
-            return Some(local.to_rfc3339());
-        }
-    }
-    None
+    crate::recording::meta::parse_timestamp_from_stem(stem)
 }

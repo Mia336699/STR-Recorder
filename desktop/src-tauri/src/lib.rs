@@ -205,10 +205,18 @@ async fn setup_app(app_handle: tauri::AppHandle) {
         .expect("Cannot create application data directory");
     let modules = data.join("modules");
     std::fs::create_dir_all(&modules).expect("Cannot create modules directory");
+    let stock_hashes: std::collections::HashMap<String, String> =
+        serde_json::from_str(include_str!("../stock-module-upgrades.json")).unwrap_or_default();
     if let Ok(entries) = std::fs::read_dir(resources.join("modules")) {
         for entry in entries.flatten() {
             let destination = modules.join(entry.file_name());
-            if !destination.exists() && entry.path().is_file() {
+            let stock_upgrade = stock_hashes.get(&entry.file_name().to_string_lossy().into_owned())
+                .is_some_and(|expected| {
+                    use sha2::{Digest, Sha256};
+                    std::fs::read(&destination).ok().is_some_and(|bytes|
+                        format!("{:x}", Sha256::digest(bytes)) == *expected)
+                });
+            if (!destination.exists() || stock_upgrade) && entry.path().is_file() {
                 if let Err(error) = std::fs::copy(entry.path(), &destination) {
                     eprintln!("Could not install module: {error}");
                 }

@@ -30,20 +30,12 @@ pub const META_VERSION: u32 = 2;
 /// Parse the recording start time from a filename stem (format: `{name}_{YYYYMMDD}_{HHmmss}`).
 pub fn parse_timestamp_from_stem(stem: &str) -> Option<String> {
     use chrono::TimeZone;
-    let parts: Vec<&str> = stem.rsplitn(3, '_').collect();
-    if parts.len() < 2 {
-        return None;
-    }
-    let time_part = parts[0];
-    let date_part = parts[1];
-    if date_part.len() == 8 && time_part.len() == 6 {
-        let combined = format!("{}{}", date_part, time_part);
-        if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(&combined, "%Y%m%d%H%M%S") {
-            let local = chrono::Local.from_local_datetime(&dt).single()?;
-            return Some(local.to_rfc3339());
-        }
-    }
-    None
+    let (stamp, part) = super::naming::parse(stem)?;
+    // New names describe group time, not the start of this individual part.
+    // Real per-part time must come from persisted metadata (filesystem fallback if lost).
+    if part.is_some() { return None; }
+    let local = chrono::Local.from_local_datetime(&stamp).single()?;
+    Some(local.to_rfc3339())
 }
 
 /// 后处理模块的执行结果 / Execution result of a post-processing module
@@ -83,6 +75,11 @@ pub struct VideoMeta {
 
     /// 录制开始时间（RFC 3339 格式）/ Recording start time (RFC 3339 format)
     pub started_at: String,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_started_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub part_index: Option<u8>,
 
     /// 文件大小（字节）/ File size (bytes)
     pub size_bytes: u64,
@@ -173,6 +170,8 @@ pub fn set_status(video_path: &Path, status: &str) {
                 meta_version: META_VERSION,
                 status: status.to_string(),
                 started_at,
+                group_started_at: None,
+                part_index: None,
                 size_bytes,
                 video_duration_secs: None,
                 pp_results: None,
@@ -211,6 +210,8 @@ pub fn set_pp_done(
                 meta_version: META_VERSION,
                 status: status.to_string(),
                 started_at,
+                group_started_at: None,
+                part_index: None,
                 size_bytes,
                 video_duration_secs: None,
                 pp_results: None,
@@ -239,6 +240,8 @@ pub fn ensure_meta(video_path: &Path, started_at: &str) {
         meta_version: META_VERSION,
         status: "merging_waiting".to_string(),
         started_at: started_at.to_string(),
+        group_started_at: None,
+        part_index: None,
         size_bytes,
         video_duration_secs: None,
         pp_results: None,
@@ -333,6 +336,8 @@ fn scan_and_ensure_meta(
                         meta_version: META_VERSION,
                         status: "finish".to_string(),
                         started_at,
+                        group_started_at: None,
+                        part_index: None,
                         size_bytes,
                         video_duration_secs,
                         pp_results: None,
@@ -559,5 +564,17 @@ pub async fn schedule_meta_version_check(
         })
         .await
         .ok();
+    }
+}
+
+#[cfg(test)]
+mod naming_compat_tests {
+    #[test]
+    fn legacy_metadata_and_filename_timestamps_remain_compatible() {
+        let old = r#"{"meta_version":2,"status":"finish","started_at":"2026-10-17T20:30:00+08:00","size_bytes":42}"#;
+        let meta: super::VideoMeta = serde_json::from_str(old).unwrap();
+        assert_eq!(meta.part_index, None); assert_eq!(meta.group_started_at, None);
+        assert!(super::parse_timestamp_from_stem("a_room_20261017_203000").is_some());
+        assert!(super::parse_timestamp_from_stem("a_room_20261017_203000_part02").is_none());
     }
 }

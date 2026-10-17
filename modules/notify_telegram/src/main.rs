@@ -31,7 +31,7 @@ use grammers_client::tl;
 use grammers_session::storages::SqliteSession;
 use grammers_session::types::{PeerAuth, PeerId, PeerRef};
 use tokio::io::AsyncReadExt;
-use pp_utils::{param, param_bool, format_duration, format_bytes, format_speed, parse_stem, find_cover, tmp_dir, image_dimensions, video_meta};
+use pp_utils::{param, param_bool, format_duration, format_bytes, format_speed, parse_recording, find_cover, tmp_dir, image_dimensions, video_meta};
 
 /// 进度上报的缩放基数 / Progress reporting scale base
 const PROGRESS_SCALE: usize = 10_000;
@@ -980,8 +980,7 @@ fn run() -> Result<(), String> {
     let send_video = param_bool("send_video", true);
 
     // 从文件名解析元数据 / Parse metadata from filename
-    let stem = input.file_stem().and_then(|s| s.to_str()).unwrap_or("recording");
-    let (model_name, timestamp) = parse_stem(stem);
+    let (model_name, timestamp) = parse_recording(&input);
     let file_size = fs::metadata(&input).map(|m| m.len()).unwrap_or(0);
     let duration  = pp_utils::video_duration(&input).unwrap_or(0.0);
     let ts_str    = if timestamp.is_empty() { "—".to_string() } else { timestamp };

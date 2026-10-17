@@ -1,6 +1,6 @@
 [package]
 name = "stripchat-recorder"
-version = "0.3.5"
+version = "0.3.6"
 description = "Stripchat Stream Recorder"
 authors = ["ChanTrail"]
 edition = "2024"
@@ -31,4 +31,7 @@ rust-embed = { version = "8", features = ["axum"] }
 mime_guess = "2"
 rand = "0.10"
 notify = "8"
+libc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
 libc = "0.2"

@@ -1,0 +1,31 @@
+{
+  "version": "0.3.6",
+  "verified_at": "2026-10-17T08:45:28.112501+08:00",
+  "tests": {
+    "backend_unit": 15,
+    "media_integration": 2,
+    "postprocess_compatibility": 1,
+    "failed": 0
+  },
+  "scenarios": [
+    "16 actual recorder rotations and complete decode of all parts",
+    "lexicographic order includes part09 -> part10",
+    "99-part rollover, midnight grouping and same-second collision",
+    "legacy and new interrupted-session recovery",
+    "per-part actual timestamps preserved through merge and postprocess",
+    "mixed legacy/new file listing by actual instant",
+    "preview image generated with numbered filename",
+    "exclusive final output publication"
+  ],
+  "dmg_sha256": "29a197fd3e7e8d1c17eea606131fb0dc52cd33980bad744e546e9aa96e2e3828",
+  "dmg_bytes": 32377104,
+  "dmg_checksum_verified": true,
+  "app_signature_verified": true,
+  "app_version_verified": true,
+  "original_merged_icon_preserved": true,
+  "bundled_module_descriptions_verified": 4,
+  "bundled_tools_work_with_minimal_path": true,
+  "native_ui_tested": false,
+  "notification_sending_tested": false,
+  "signature": "ad-hoc, not notarized"
+}

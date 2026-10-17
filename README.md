@@ -6,7 +6,7 @@
 
 ## 安装
 
-在本仓库 Releases 下载 `STR-Recorder-0.3.5-Chaturbate-merged-logo-arm64.dmg`，将 STR Recorder 拖到 Applications 后启动。
+在本仓库 Releases 下载 `STR-Recorder-0.3.6-arm64.dmg`，将 STR Recorder 拖到 Applications 后启动。
 
 - Apple Silicon，macOS 26 或以上；暂不支持 Intel Mac。
 - 随包提供 FFmpeg、ffprobe 和四个后处理模块，运行时不需要 Node.js、Rust、Homebrew 或网页服务。
@@ -14,6 +14,8 @@
 - 当前构建使用本地 ad-hoc 签名，尚未进行 Apple Developer ID 签名和公证。
 
 ## 功能
+
+- 新录制采用 `用户名_YYYYMMDD_HHMMSS_part01.mp4`，同组固定时间前缀与两位分段编号，按名称升序即可顺序播放；旧文件不改名。
 
 - Stripchat 原有录制功能与 Chaturbate 公开房间录制。
 - 手动录制与上线自动录制，支持首选分辨率、分段和停止后的合并。
@@ -37,6 +39,8 @@ scripts/package-macos.sh
 安装包输出到 `build/desktop-macos/`。构建脚本将 FFmpeg 和依赖库放入应用资源，重写动态库路径并进行本地签名。用户配置与日志位于 `~/Library/Application Support/com.mia.str-recorder/`，更新应用不会覆盖用户数据。
 
 ## 验证
+
+0.3.6 的本地验收通过 15 项后端单元测试、2 项真实录制器模拟流集成测试和 1 项后处理命名兼容测试；实际拆分 16 段并验证逐段完整解码、09→10 排序、中断恢复与新旧文件混合显示。预览图模块已用新文件名实际生成图片；通知发送未执行。
 
 ```sh
 npm run build --prefix desktop

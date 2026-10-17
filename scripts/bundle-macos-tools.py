@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Bundle local FFmpeg tools with their non-system dylib closure and relocate load commands."""
 from pathlib import Path
-import subprocess, shutil, json
+import subprocess, shutil, json, os
 root=Path(__file__).resolve().parents[1]
 out=root/'desktop/src-tauri/resources/bin'
 out.mkdir(parents=True,exist_ok=True)
@@ -21,7 +21,13 @@ def collect(source):
     for dep in deps(source):
         if dep.startswith('/opt/homebrew/'): collect(dep)
         elif dep.startswith('@'): raise RuntimeError(f'Unresolved dependency {dep} from {source}')
-for name in ['ffmpeg','ffprobe']: collect(shutil.which(name))
+# Never select a previous generated copy as its own source when PATH includes it.
+source_path = os.pathsep.join(p for p in os.environ.get('PATH', '').split(os.pathsep)
+    if Path(p).resolve() != out.resolve())
+for name in ['ffmpeg','ffprobe']:
+    source = shutil.which(name, path=source_path)
+    if not source: raise RuntimeError(f'Missing build dependency: {name}')
+    collect(source)
 for name,source in sources.items():
     dest=out/name
     subprocess.run(['codesign','--remove-signature',str(dest)],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)

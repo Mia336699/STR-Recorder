@@ -1,6 +1,6 @@
 {
   "productName": "STR Recorder",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "identifier": "com.mia.str-recorder",
   "build": {
     "beforeDevCommand": "npm run dev",

@@ -126,6 +126,9 @@ pub fn format_speed(bytes_per_sec: f64) -> String {
 /// `(model_name, timestamp_str)` 元组，解析失败时 timestamp 为空字符串。
 /// Tuple of `(model_name, timestamp_str)`, timestamp is empty string on parse failure.
 pub fn parse_stem(stem: &str) -> (String, String) {
+    let stem = stem.rsplit_once("_part")
+        .filter(|(_, digits)| digits.len() == 2 && digits.bytes().all(|c| c.is_ascii_digit()) && *digits != "00")
+        .map(|(base, _)| base).unwrap_or(stem);
     let parts: Vec<&str> = stem.split('_').collect();
     if parts.len() >= 3 {
         let date = parts[parts.len() - 2];
@@ -337,4 +340,32 @@ pub fn emit_progress_step(step: u32, total_steps: u32) {
             .min(PROGRESS_SCALE as u64) as u32
     };
     println!("PROGRESS:{}/{}", scaled, PROGRESS_SCALE);
+}
+
+/// Prefer actual segment time from the recorder sidecar over the group label in its name.
+pub fn parse_recording(path: &Path) -> (String, String) {
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("recording");
+    let (name, label) = parse_stem(stem);
+    let actual = path.parent().and_then(|p| std::fs::read(p.join(format!(".{stem}.json"))).ok())
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .and_then(|meta| meta["started_at"].as_str().map(str::to_owned));
+    let is_part = stem.rsplit_once("_part").is_some_and(|(_, n)| n.len() == 2 && n.bytes().all(|c| c.is_ascii_digit()));
+    (name, actual.unwrap_or_else(|| if is_part { String::new() } else { label }))
+}
+
+#[cfg(test)]
+mod recording_name_tests {
+    #[test]
+    fn supports_legacy_and_numbered_parts_and_actual_time() {
+        let (name, time) = super::parse_stem("a_room_20261017_233000_part02");
+        assert_eq!(name, "a_room"); assert_eq!(time, "2026-10-17 23:30:00");
+        assert_eq!(super::parse_stem("a_room_20261017_233000").0, "a_room");
+        let root = std::env::temp_dir().join(format!("str-pp-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let video = root.join("a_room_20261017_233000_part02.mp4");
+        assert!(super::parse_recording(&video).1.is_empty());
+        std::fs::write(root.join(".a_room_20261017_233000_part02.json"), r#"{"started_at":"2026-10-18T00:00:02+08:00"}"#).unwrap();
+        assert_eq!(super::parse_recording(&video).1, "2026-10-18T00:00:02+08:00");
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

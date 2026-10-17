@@ -1,6 +1,6 @@
 [package]
 name = "stripchat-recorder-desktop"
-version = "0.3.5"
+version = "0.3.6"
 description = "Stripchat Stream Recorder (Desktop)"
 authors = ["ChanTrail"]
 edition = "2024"
@@ -30,3 +30,5 @@ parking_lot = "0.12"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 base64 = "0.22"
+
+sha2 = "0.10"

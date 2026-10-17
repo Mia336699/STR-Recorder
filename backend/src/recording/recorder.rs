@@ -15,7 +15,6 @@ use crate::core::emitter::{Emitter, EmitterExt};
 use crate::core::error::{AppError, Result};
 use crate::recording::hls::{get_url_prefix, parse_playlist};
 use crate::streaming::platform::StreamApi;
-use chrono::Local;
 use parking_lot::RwLock;
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -42,6 +41,7 @@ pub struct RecordingSession {
     pub started_at: chrono::DateTime<chrono::Utc>,
     /// 停止录制的信号发送端 / Sender to signal recording stop
     stop_tx: mpsc::Sender<()>,
+    naming: super::naming::PartName,
 }
 
 /// 录制管理器，管理所有主播的录制会话。
@@ -185,19 +185,18 @@ impl RecorderManager {
         if sessions.contains_key(username) {
             return Err(AppError::AlreadyRecording(username.into()));
         }
-        let timestamp = Local::now().format("%Y%m%d_%H%M%S");
-        let session_dir = PathBuf::from(&settings.output_dir)
-            .join(username)
-            .join(format!("{}_{}", username, timestamp));
-        fs::create_dir_all(&session_dir)?;
+        let now = chrono::Utc::now();
+        let parent = PathBuf::from(&settings.output_dir).join(username);
+        let (naming, session_dir) = super::naming::PartName::first(&parent, username, now)?;
 
         let (stop_tx, stop_rx) = mpsc::channel(1);
 
         let session = RecordingSession {
             username: username.to_string(),
             dir_path: session_dir.clone(),
-            started_at: chrono::Utc::now(),
+            started_at: now,
             stop_tx,
+            naming: naming.clone(),
         };
 
         self.pending_tasks.fetch_add(1, Ordering::SeqCst);
@@ -221,14 +220,12 @@ impl RecorderManager {
                 .unwrap_or("unknown");
             let parent = session_dir.parent().unwrap_or(&session_dir);
             let target_path = parent.join(format!("{}.{}", stem, settings.merge_format));
-            let started_at = {
-                let local: chrono::DateTime<chrono::Local> = chrono::Utc::now().into();
-                local.to_rfc3339()
-            };
             let meta = crate::recording::meta::VideoMeta {
                 meta_version: crate::recording::meta::META_VERSION,
                 status: "recording".to_string(),
-                started_at,
+                started_at: now.to_rfc3339(),
+                group_started_at: Some(naming.group_started_at.to_rfc3339()),
+                part_index: Some(naming.index),
                 size_bytes: 0,
                 video_duration_secs: None,
                 pp_results: None,
@@ -460,22 +457,10 @@ impl RecorderManager {
         emitter: &Arc<dyn Emitter>,
     ) -> Result<()> {
         let parent = session_dir.parent().unwrap_or(session_dir);
-        let (now, next_dir) = loop {
-            let now = chrono::Utc::now();
-            let timestamp = now.with_timezone(&Local).format("%Y%m%d_%H%M%S");
-            let candidate = parent.join(format!("{}_{}", username, timestamp));
-            let stem = candidate.file_name().unwrap().to_string_lossy();
-            if !candidate.exists()
-                && !parent.join(format!("{}.mp4", stem)).exists()
-                && !parent.join(format!("{}.mkv", stem)).exists()
-                && !parent.join(format!(".{}.json", stem)).exists()
-            {
-                fs::create_dir(&candidate)?;
-                break (now, candidate);
-            }
-            // Wait for a unique timestamp.
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        };
+        let now = chrono::Utc::now();
+        let previous_naming = self.sessions.read().get(username)
+            .ok_or_else(|| AppError::NotRecording(username.into()))?.naming.clone();
+        let (naming, next_dir) = previous_naming.next(parent, username, now)?;
         let format = self.state.get_settings().merge_format;
         let target = parent.join(format!(
             "{}.{}",
@@ -483,6 +468,11 @@ impl RecorderManager {
             format
         ));
         crate::recording::meta::ensure_meta(&target, &now.to_rfc3339());
+        if let Some(mut meta) = crate::recording::meta::read_meta(&target) {
+            meta.group_started_at = Some(naming.group_started_at.to_rfc3339());
+            meta.part_index = Some(naming.index);
+            crate::recording::meta::write_meta(&target, &meta);
+        }
         crate::recording::meta::set_status(&target, "recording");
         let previous = std::mem::replace(session_dir, next_dir);
         // Lock the completed directory before releasing its active-session protection.
@@ -494,6 +484,7 @@ impl RecorderManager {
                 .max(0) as u64;
             session.dir_path = session_dir.clone();
             session.started_at = now;
+            session.naming = naming;
             elapsed
         });
         emitter.emit(
@@ -1048,6 +1039,29 @@ pub fn dir_size_bytes(dir: &PathBuf) -> std::io::Result<u64> {
 /// # 返回值 / Returns
 /// 合并后视频的时长（秒），失败时返回 `None`。
 /// Duration of the merged video (seconds), or `None` on failure.
+fn publish_merged_file(source: &std::path::Path, target: &std::path::Path) -> std::io::Result<()> {
+    // Exclusive publication keeps both existing recordings and interrupted merges safe.
+    // macOS rename supports external filesystems without requiring hard-link support.
+    #[cfg(target_os = "macos")]
+    {
+        use std::{ffi::CString, os::unix::ffi::OsStrExt};
+        let source = CString::new(source.as_os_str().as_bytes())
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?;
+        let target = CString::new(target.as_os_str().as_bytes())
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?;
+        // SAFETY: the owned CStrings remain valid for the entire call; RENAME_EXCL
+        // atomically fails if the destination exists instead of overwriting it.
+        if unsafe { libc::renamex_np(source.as_ptr(), target.as_ptr(), libc::RENAME_EXCL) } == 0 {
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error())
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    { fs::hard_link(source, target) }
+}
+
+
 fn merge_segments(
     session_dir: &PathBuf,
     username: &str,
@@ -1078,6 +1092,12 @@ fn merge_segments(
     let stem = session_dir.file_name().and_then(|n| n.to_str())?;
     let output_path = parent.join(format!("{}.{}", stem, merge_format));
 
+    if output_path.exists() {
+        tracing::error!("Refusing to overwrite existing recording: {:?}", output_path);
+        return None;
+    }
+    // Keep interrupted FFmpeg output inside the session; publish exclusively after FFmpeg completes.
+    let temporary_path = session_dir.join(format!(".merge-{}.{}", rand::random::<u64>(), merge_format));
     tracing::info!("Merging {} → {:?}", username, output_path);
 
     let total_bytes: u64 = fs::read_dir(session_dir)
@@ -1101,10 +1121,10 @@ fn merge_segments(
         .expect("ffmpeg semaphore closed");
 
     let mut child = match Command::new(crate::core::runtime::tool("ffmpeg"))
-        .args(["-y", "-allowed_extensions", "ALL", "-i"])
+        .args(["-n", "-allowed_extensions", "ALL", "-i"])
         .arg(&m3u8_path)
         .args(["-c", "copy"])
-        .arg(&output_path)
+        .arg(&temporary_path)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
@@ -1122,7 +1142,7 @@ fn merge_segments(
         match child.try_wait() {
             Ok(Some(_)) => break,
             Ok(None) => {
-                let out_bytes = fs::metadata(&output_path).map(|m| m.len()).unwrap_or(0);
+                let out_bytes = fs::metadata(&temporary_path).map(|m| m.len()).unwrap_or(0);
                 emitter.emit(
                     "merge-progress",
                     &serde_json::json!({
@@ -1143,6 +1163,10 @@ fn merge_segments(
     let status = child.wait();
     match status {
         Ok(s) if s.success() => {
+            if let Err(error) = publish_merged_file(&temporary_path, &output_path) {
+                tracing::error!("Could not publish merged recording without overwriting: {}", error);
+                return None;
+            }
             tracing::info!("Merge complete: {:?}", output_path);
             emitter.emit(
                 "merge-progress",
@@ -1467,19 +1491,9 @@ fn session_dir_timestamp(path: &std::path::Path) -> String {
 }
 
 fn session_dir_timestamp_from_stem(stem: &str) -> String {
-    let parts: Vec<&str> = stem.split('_').collect();
-    if parts.len() >= 2 {
-        let date = parts[parts.len() - 2];
-        let time = parts[parts.len() - 1];
-        if date.len() == 8
-            && time.len() == 6
-            && date.chars().all(|c| c.is_ascii_digit())
-            && time.chars().all(|c| c.is_ascii_digit())
-        {
-            return format!("{}_{}", date, time);
-        }
-    }
-    stem.to_string()
+    super::naming::parse(stem)
+        .map(|(stamp, index)| format!("{}_{:02}", stamp.format("%Y%m%d_%H%M%S"), index.unwrap_or(0)))
+        .unwrap_or_else(|| stem.to_string())
 }
 
 fn collect_unprocessed_videos(
@@ -1507,5 +1521,22 @@ fn collect_unprocessed_videos(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod naming_merge_tests {
+    #[test]
+    fn merged_output_never_overwrites_existing_video() {
+        let root = std::env::temp_dir().join(format!("str-publish-{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&root).unwrap();
+        let source = root.join("new.mp4"); let target = root.join("existing.mp4");
+        std::fs::write(&source, b"new").unwrap(); std::fs::write(&target, b"keep").unwrap();
+        assert!(super::publish_merged_file(&source, &target).is_err());
+        assert_eq!(std::fs::read(&target).unwrap(), b"keep");
+        std::fs::remove_file(&target).unwrap();
+        super::publish_merged_file(&source, &target).unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"new");
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

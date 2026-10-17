@@ -11,7 +11,7 @@
 //! - 标准输出 `STATUS:{speed}`: 上传速度上报 / Upload speed reporting
 
 use pp_utils::{
-    emit_progress_step, find_cover, format_bytes, format_duration, format_speed, param, parse_stem,
+    emit_progress_step, find_cover, format_bytes, format_duration, format_speed, param, parse_recording,
     tmp_dir, video_duration, PROGRESS_SCALE,
 };
 use socket2::{Domain, Socket, Type};
@@ -619,11 +619,7 @@ fn run() -> Result<(), String> {
 
     emit_progress_step(0, 3);
 
-    let stem = input
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("recording");
-    let (model_name, timestamp) = parse_stem(stem);
+    let (model_name, timestamp) = parse_recording(&input);
     let file_size = fs::metadata(&input).map(|m| m.len()).unwrap_or(0);
     let duration = video_duration(&input).unwrap_or(0.0);
 

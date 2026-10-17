@@ -162,12 +162,21 @@ fn run() -> Result<(), String> {
     let fontfile_param = param("fontfile", "");
 
     // 确定字体文件路径（优先使用用户指定的）/ Determine font file path (user-specified takes priority)
-    let fontfile = if !fontfile_param.is_empty() {
+    let mut fontfile = if !fontfile_param.is_empty() {
         Some(ffmpeg_escape_path(&fontfile_param))
     } else {
         find_font()
     };
 
+    if fontfile.is_some() {
+        let drawtext = Command::new("ffmpeg").args(["-hide_banner", "-filters"])
+            .output().ok().is_some_and(|out| String::from_utf8_lossy(&out.stdout)
+                .lines().any(|line| line.split_whitespace().nth(1) == Some("drawtext")));
+        if !drawtext {
+            eprintln!("Warning: FFmpeg has no drawtext filter; generating preview without timestamp overlay");
+            fontfile = None;
+        }
+    }
     if fontfile.is_none() {
         eprintln!("Warning: no font file found, timestamp overlay will be skipped");
     }
