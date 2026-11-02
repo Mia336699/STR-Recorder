@@ -1,0 +1,44 @@
+{
+  "version": "0.3.7",
+  "verified_at": "2026-11-03T07:56:52.839576+08:00",
+  "production_code_changed": false,
+  "dmg_unchanged": true,
+  "diagnosis": "Isolated original probe had no configured Mouflon keys. Same-room empty-key control failed; explicitly copying existing keys into disposable config succeeded.",
+  "configured_public_rooms": {
+    "tested": 2,
+    "hls_ready": 2,
+    "complete_segment_decode": 2,
+    "codecs": [
+      "h264",
+      "aac"
+    ]
+  },
+  "empty_key_same_room_control": {
+    "hls_ready": false,
+    "message": "segment download failed"
+  },
+  "offline_room": {
+    "tested": 1,
+    "rejected_as_unplayable": true
+  },
+  "native_window": {
+    "playback_times": [
+      0.4,
+      35.2,
+      66.9
+    ],
+    "decoded_frames": [
+      13,
+      658,
+      1628
+    ],
+    "default_audible_players": 0,
+    "audible_after_unmute": 1,
+    "audible_after_mute": 0,
+    "sessions_after_close": 0,
+    "players_after_close": 0
+  },
+  "keys_published": false,
+  "user_settings_modified": false,
+  "temporary_config_removed": true
+}

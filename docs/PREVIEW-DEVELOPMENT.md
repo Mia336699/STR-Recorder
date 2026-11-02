@@ -18,3 +18,8 @@ cargo test --manifest-path modules/pp_utils/Cargo.toml
 验收页面直接使用生产卡片、预览状态管理和 Tauri 命令，额外显示 HTMLMediaElement 的播放时间、解码帧数、有声数量及后端会话数。可在窗口内观察四路画面和声音互斥，测试离开/返回列表、快速开关，并输入公开房间链接进行真实站点验收。
 
 该程序和页面仅为显式开发验收使用；正式打包脚本会移除 STR_PREVIEW_HARNESS 环境标志，不将测试入口和测试命令放入发行应用。真实房间诊断亦可使用 `backend/examples/preview_probe.rs`，它使用隔离配置且不输出签名源地址。
+
+
+真实 Stripchat 验收需要与应用一致的 Mouflon 取流配置。公开房间也可能要求匹配的取流密钥；隔离测试默认空配置不能等同于已配置应用。
+
+`preview_probe` 支持显式设置 `STR_PREVIEW_KEYS_FILE` 为已有 `mouflon_keys.json` 的路径。程序只将其中的 keys 写入本次临时配置，退出时删除临时目录；不改变源文件，也不输出密钥或签名 URL。工具路径通过 `STR_TOOLS` 指定。不要把真实密钥、签名 URL 或用户配置加入仓库。

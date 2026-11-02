@@ -8,7 +8,13 @@ async fn main(){
  let _=tracing_subscriber::fmt().with_env_filter("stripchat_recorder_lib::preview=warn").try_init();
  let root=std::env::temp_dir().join(format!("str-preview-probe-{}",std::process::id()));
  stripchat_recorder_lib::core::runtime::initialize(root.join("data"),std::path::PathBuf::from(std::env::var("STR_TOOLS").unwrap_or_default())).unwrap();
- let state=AppState::new().unwrap(); let events=Arc::new(Events::default());
+ let state=AppState::new().unwrap();
+ // Explicit opt-in: copy only keys into the disposable probe config, never modify the source.
+ if let Ok(path)=std::env::var("STR_PREVIEW_KEYS_FILE") {
+  let store:stripchat_recorder_lib::config::settings::MouflonKeysStore=serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+  for (key,value) in store.keys { state.add_mouflon_key(&key,&value).unwrap(); }
+ }
+ let events=Arc::new(Events::default());
  let manager=PreviewManager::new(root.join("cache"),state.clone(),events.clone()).await.unwrap();
  let client=reqwest::Client::new();
  for (i,name) in std::env::args().skip(1).enumerate(){
