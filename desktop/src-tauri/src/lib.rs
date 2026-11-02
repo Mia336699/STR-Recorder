@@ -109,6 +109,10 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::start_live_preview,
+            commands::stop_live_preview,
+            commands::stop_all_live_previews,
+            commands::get_live_preview_status,
             // Streamers
             commands::list_streamers,
             commands::add_streamer,
@@ -164,8 +168,10 @@ pub fn run() {
                 let app_state = Arc::clone(&state.app_state);
                 let recorder = Arc::clone(&state.recorder);
                 let startup_done = Arc::clone(&state.startup_done);
+                let previews = state.previews.clone();
                 let app = app.clone();
                 rt_for_exit.spawn(async move {
+                    if let Some(previews) = previews { previews.shutdown().await; }
                     recorder.shutdown().await;
                     while !startup_done.load(Ordering::SeqCst) {
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -242,6 +248,17 @@ async fn setup_app(app_handle: tauri::AppHandle) {
     // 创建录制管理器 / Create recorder manager
     let recorder = RecorderManager::new(Arc::clone(&app_state));
 
+    // A preview/cache/listener failure must never prevent recordings from starting.
+    let previews = match app_handle.path().app_cache_dir() {
+        Ok(cache) => match stripchat_recorder_lib::preview::PreviewManager::new(
+            cache.join("live-preview"), Arc::clone(&app_state), Arc::clone(&emitter),
+        ).await {
+            Ok(previews) => Some(previews),
+            Err(error) => { tracing::warn!("Live preview unavailable: {}", error); None }
+        },
+        Err(error) => { tracing::warn!("Preview cache unavailable: {}", error); None }
+    };
+
     // 创建状态监控器 / Create status monitor
     let monitor = StatusMonitor::new(Arc::clone(&app_state), Arc::clone(&recorder));
 
@@ -290,6 +307,7 @@ async fn setup_app(app_handle: tauri::AppHandle) {
 
     // 将 DesktopState 注册为 Tauri 托管状态 / Register DesktopState as Tauri-managed state
     app_handle.manage(DesktopState {
+        previews,
         exit_ready: AtomicBool::new(false),
         exiting: AtomicBool::new(false),
         startup_done: Arc::clone(&startup_done),

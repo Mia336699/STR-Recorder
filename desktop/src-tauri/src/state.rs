@@ -24,6 +24,7 @@ pub struct DesktopState {
     pub app_state: Arc<AppState>,
     /// 录制管理器 / Recorder manager
     pub recorder: Arc<RecorderManager>,
+    pub previews: Option<Arc<stripchat_recorder_lib::preview::PreviewManager>>,
     /// 主播状态监控器 / Streamer status monitor
     pub monitor: Arc<StatusMonitor>,
     /// 事件发射器（Arc<dyn Emitter>，具体实现为 TauriEmitter）

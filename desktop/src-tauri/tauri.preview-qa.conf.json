@@ -1,0 +1,7 @@
+{
+  "productName": "STR Preview QA",
+  "identifier": "com.mia.str-recorder.preview-qa",
+  "build": { "frontendDist": "../dist" },
+  "app": { "withGlobalTauri": false, "windows": [{ "label": "main", "title": "STR Preview QA — synthetic streams", "url": "tests/preview-harness.html", "width": 1100, "height": 850, "visible": true }], "security": { "csp": null } },
+  "bundle": { "active": false, "macOS": { "infoPlist": "Info.plist", "minimumSystemVersion": "26.0" } }
+}

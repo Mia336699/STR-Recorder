@@ -9,6 +9,7 @@ pub mod core;
 pub mod locale;
 pub mod postprocess;
 pub mod recording;
+pub mod preview;
 pub mod relay;
 pub mod server_mod;
 pub mod streaming;

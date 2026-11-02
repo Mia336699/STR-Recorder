@@ -20,6 +20,6 @@ jobs:
       - name: Install media test tools
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Backend tests including media fixtures
-        run: cargo test --manifest-path backend/Cargo.toml --lib --test public_hls_recording -- --include-ignored
+        run: cargo test --manifest-path backend/Cargo.toml --lib --test public_hls_recording --test live_preview -- --include-ignored
       - name: Post-processing filename compatibility
         run: cargo test --manifest-path modules/pp_utils/Cargo.toml

@@ -94,6 +94,7 @@ pub async fn remove_streamer(
     username: String,
     state: State<'_, DesktopState>,
 ) -> CmdResult<serde_json::Value> {
+    if let Some(previews) = &state.previews { previews.stop_username(&username).await; }
     if state.recorder.is_recording(&username) {
         state.recorder.stop_recording(&username).await.map_err(map_err)?;
     }
@@ -590,4 +591,24 @@ pub async fn get_module_outputs(
     }
 
     Ok(serde_json::to_value(outputs).unwrap())
+}
+
+// Live previews are separate from recording and accept only already-added rooms.
+#[tauri::command]
+pub async fn start_live_preview(username: String, request_id: String, state: State<'_, DesktopState>) -> CmdResult<stripchat_recorder_lib::preview::PreviewStarted> {
+    if state.exiting.load(std::sync::atomic::Ordering::SeqCst) { return Err("Application is exiting".into()); }
+    if !state.app_state.get_streamers().iter().any(|s| s.username == username) { return Err("Room is not in the streamer list".into()); }
+    state.previews.as_ref().ok_or_else(|| "直播预览暂不可用，请重启应用".to_string())?.start(&username, &request_id)
+}
+#[tauri::command]
+pub async fn stop_live_preview(preview_id: String, state: State<'_, DesktopState>) -> CmdResult<()> {
+    if let Some(previews) = &state.previews { previews.stop(&preview_id).await; } Ok(())
+}
+#[tauri::command]
+pub async fn stop_all_live_previews(state: State<'_, DesktopState>) -> CmdResult<()> {
+    if let Some(previews) = &state.previews { previews.stop_all().await; } Ok(())
+}
+#[tauri::command]
+pub fn get_live_preview_status(preview_id: String, state: State<'_, DesktopState>) -> Option<stripchat_recorder_lib::preview::PreviewStatus> {
+    state.previews.as_ref().and_then(|previews| previews.status(&preview_id))
 }

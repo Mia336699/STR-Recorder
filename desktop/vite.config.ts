@@ -21,6 +21,7 @@ export default defineConfig({
     outDir: "dist",
     emptyOutDir: true,
     rollupOptions: {
+      ...(process.env.STR_PREVIEW_HARNESS === "1" ? { input: { main: "index.html", preview: "tests/preview-harness.html" } } : {}),
       output: {
         manualChunks(id) {
           if (["vue", "vue-router", "pinia"].some((m) => id.includes(`/node_modules/${m}/`))) return "vendor-vue";

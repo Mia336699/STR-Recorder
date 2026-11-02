@@ -9,6 +9,9 @@
     Initializes event listeners and loads the streamer list from backend on mount.
 -->
 <script setup lang="ts">
+import { onBeforeUnmount } from "vue";
+import { livePreviews } from "@/composables/useLivePreviews";
+onBeforeUnmount(() => { void livePreviews.stopAll(); });
 	import { onMounted, ref } from "vue";
 	import { useStreamersStore } from "../stores/streamers";
 	import type { StreamerEntry } from "../stores/streamers";

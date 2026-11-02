@@ -24,7 +24,7 @@
 	import { Switch } from "@/components/ui/switch";
 	import { Label } from "@/components/ui/label";
 	import { ref, watch, computed } from "vue";
-	import { useFastThumbnail } from "@/composables/useFastThumbnail";
+	import LivePreviewPicture from "./LivePreviewPicture.vue";
 	import { X, Circle, Eye } from "@lucide/vue";
 	import { useI18n } from "vue-i18n";
 
@@ -44,10 +44,6 @@
 		(val) => { autoRecord.value = val; },
 	);
 
-	const thumbnailSrc = computed(() => props.streamer.thumbnail_url ?? null);
-	const fastThumbnail = useFastThumbnail(thumbnailSrc);
-	const thumbnailFailed = ref(false);
-	watch(fastThumbnail, () => { thumbnailFailed.value = false; });
 
 	function onAutoChange(val: boolean) {
 		autoRecord.value = val;
@@ -71,27 +67,10 @@
 			'border-red-900/50': streamer.is_recording,
 		}"
 	>
-		<div class="relative aspect-video bg-muted overflow-hidden">
-			<img
-				v-if="fastThumbnail && !thumbnailFailed"
-				:key="fastThumbnail"
-				:src="fastThumbnail"
-				:alt="displayName"
-				@error="thumbnailFailed = true"
-				loading="lazy"
-				class="w-full h-full object-cover"
-			/>
-			<div
-				v-else
-				class="w-full h-full flex items-center justify-center text-4xl font-bold text-muted-foreground/20"
-			>
-				{{ displayName[0]?.toUpperCase() }}
-			</div>
-			<Circle
-				v-if="streamer.is_recording"
-				class="absolute top-1.5 right-2 size-2.5 fill-red-500 text-red-500 animate-pulse"
-			/>
-		</div>
+        <div class="relative">
+          <LivePreviewPicture :username="streamer.username" :playable="streamer.is_online && streamer.is_recordable" :thumbnail="streamer.thumbnail_url" />
+          <Circle v-if="streamer.is_recording" class="absolute top-1.5 right-2 size-2.5 fill-red-500 text-red-500 animate-pulse pointer-events-none" />
+        </div>
 
 		<CardContent class="p-3 flex flex-col gap-2">
 			<div class="flex items-center justify-between">

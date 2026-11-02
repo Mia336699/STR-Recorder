@@ -1,6 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# Production bundles must never include the opt-in native QA page.
+unset STR_PREVIEW_HARNESS
 # Requires Node.js, Rust, Xcode command line tools, and an arm64 FFmpeg installation at build time only.
 python3 scripts/bundle-macos-tools.py
 if [ "${STR_REUSE_MODULES:-0}" = "1" ]; then
@@ -22,7 +24,7 @@ if [ -d "$STAGE/STR Recorder.app" ]; then rm -rf "$STAGE/STR Recorder.app"; fi
 ditto "$APP" "$STAGE/STR Recorder.app"
 ln -sfn /Applications "$STAGE/Applications"
 cp docs/MACOS.md "$STAGE/安装说明.txt"
-DMG="$PWD/build/desktop-macos/STR-Recorder-0.3.6-arm64.dmg"
+DMG="$PWD/build/desktop-macos/STR-Recorder-0.3.7-arm64.dmg"
 hdiutil create -volname 'STR Recorder' -srcfolder "$STAGE" -ov -format UDZO "$DMG"
 hdiutil verify "$DMG"
 (cd "$(dirname "$DMG")" && shasum -a 256 "$(basename "$DMG")") > "$DMG.sha256"

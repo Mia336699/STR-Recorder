@@ -1,4 +1,7 @@
 export default {
+    livePreview: {
+        open: "点击观看直播", close: "关闭观看", connecting: "连接直播中…", buffering: "正在缓冲…", retrying: "连接中断，正在重试…", error: "无法播放直播，点击重试", live: "直播预览", mute: "静音", unmute: "打开声音（其他房间自动静音）",
+    },
 	nav: {
 		streamers: "主播列表",
 		recordings: "录制文件",

@@ -1,0 +1,51 @@
+{
+  "version": "0.3.7",
+  "verified_at": "2026-11-03T07:18:03.264006+08:00",
+  "tests": {
+    "backend_unit": 15,
+    "preview_integration": 3,
+    "recording_integration": 2,
+    "postprocess_compatibility": 1,
+    "failed": 0
+  },
+  "native_synthetic": {
+    "concurrent_players": 4,
+    "playing_players": 4,
+    "default_audible_players": 0,
+    "audible_after_switch": 1,
+    "remaining_playing_after_closing_one": 3,
+    "sessions_after_leaving_list": 0,
+    "fast_connect_cancel_sessions": 0,
+    "return_does_not_auto_play": true
+  },
+  "real_chaturbate": {
+    "user_provided_public_room": true,
+    "hls_ready": true,
+    "codecs": [
+      "h264",
+      "aac"
+    ],
+    "segment_full_decode": true,
+    "native_playback_times": [
+      10.9,
+      73.9
+    ],
+    "native_decoded_frames": [
+      286,
+      2077
+    ],
+    "sessions_after_close": 0
+  },
+  "real_stripchat_verified": false,
+  "recording_continues_after_preview_stop": true,
+  "audio_window_skew_regression": true,
+  "bounded_retry_and_successful_recovery": true,
+  "dmg_sha256": "9d31a396424c60e6291fd228cafabdafc73266b594762586e03945dc1ce85502",
+  "dmg_bytes": 33884050,
+  "signature": "ad-hoc, not notarized",
+  "app_signature_verified": true,
+  "original_merged_icon_preserved": true,
+  "qa_assets_and_commands_excluded": true,
+  "bundled_tools_minimal_path_verified": true,
+  "native_installed_application_modified": false
+}

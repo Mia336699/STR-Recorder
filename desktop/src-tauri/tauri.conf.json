@@ -1,6 +1,6 @@
 {
   "productName": "STR Recorder",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "identifier": "com.mia.str-recorder",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -43,7 +43,8 @@
       "resources/"
     ],
     "macOS": {
-      "minimumSystemVersion": "26.0"
+      "minimumSystemVersion": "26.0",
+      "infoPlist": "Info.plist"
     }
   }
 }

@@ -1,4 +1,7 @@
 export default {
+    livePreview: {
+        open: "Watch live", close: "Close live preview", connecting: "Connecting…", buffering: "Buffering…", retrying: "Connection interrupted, retrying…", error: "Unable to play. Click to retry", live: "LIVE PREVIEW", mute: "Mute", unmute: "Unmute (mute other rooms)",
+    },
 	nav: {
 		streamers: "Streamers",
 		recordings: "Recordings",
