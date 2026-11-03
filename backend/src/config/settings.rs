@@ -59,6 +59,23 @@ pub struct PpTaskStatus {
     pub from_memory: bool,
 }
 
+impl PpTaskStatus {
+    pub fn is_active(&self) -> bool { matches!(self.status.as_str(), "waiting" | "running") }
+}
+
+#[cfg(test)]
+mod postprocess_lifecycle_tests {
+    use super::PpTaskStatus;
+    #[test]
+    fn completed_history_does_not_block_shutdown() {
+        let mut task = PpTaskStatus { path: String::new(), pct: 0.0, mod_done: 0, mod_total: 0, module_name: String::new(), done: 0, total: 0, status: "waiting".into(), from_memory: true };
+        assert!(task.is_active());
+        task.status = "running".into(); assert!(task.is_active());
+        task.status = "done".into(); assert!(!task.is_active());
+        task.status = "error".into(); assert!(!task.is_active());
+    }
+}
+
 /// 用户可配置的录制器设置 / User-configurable recorder settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {

@@ -20,7 +20,7 @@
     - Multi-column sorting and group collapsing
 -->
 <script setup lang="ts">
-	import { onMounted, onUnmounted, computed, ref, watchEffect } from "vue";
+	import { onMounted, onUnmounted, computed, ref, watchEffect, nextTick } from "vue";
 	import { call, on } from "@/lib/api";
 	import { useNotify } from "../composables/useNotify";
 	import { usePostprocessStore } from "@/stores/postprocess";
@@ -199,6 +199,8 @@
 		if (!outputPath) return;
 		try {
 			const result = await call<{ data: string }>("read_output_file", { path: outputPath });
+			detailPath.value = null;
+            await nextTick();
 			openPreview(result.data, outputPath.split(/[\\/]/).pop() ?? "预览图");
 		} catch (e) {
 			toast(String(e), "error");

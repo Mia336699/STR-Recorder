@@ -25,3 +25,5 @@ jobs:
         run: cargo test --manifest-path backend/Cargo.toml --lib --test public_hls_recording --test live_preview -- --include-ignored
       - name: Post-processing filename compatibility
         run: cargo test --manifest-path modules/pp_utils/Cargo.toml
+      - name: Contact sheet encoder fallback
+        run: cargo test --manifest-path modules/contact_sheet/Cargo.toml

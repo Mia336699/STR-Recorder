@@ -186,9 +186,7 @@ pub fn run() {
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     }
                     shutdown_ui::phase(&app, "postprocess");
-                    while !app_state.pp_tasks.read().is_empty() {
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                    }
+                    shutdown_ui::wait_for_postprocess(app_state).await;
                     tracing::info!("Desktop shutdown completed; recordings finalized");
                     app.state::<DesktopState>().exit_ready.store(true, Ordering::SeqCst);
                     app.exit(0);
@@ -221,7 +219,7 @@ async fn setup_app(app_handle: tauri::AppHandle) {
         .expect("Cannot create application data directory");
     let modules = data.join("modules");
     std::fs::create_dir_all(&modules).expect("Cannot create modules directory");
-    let stock_hashes: std::collections::HashMap<String, String> =
+    let stock_hashes: std::collections::HashMap<String, serde_json::Value> =
         serde_json::from_str(include_str!("../stock-module-upgrades.json")).unwrap_or_default();
     if let Ok(entries) = std::fs::read_dir(resources.join("modules")) {
         for entry in entries.flatten() {
@@ -230,7 +228,10 @@ async fn setup_app(app_handle: tauri::AppHandle) {
                 .is_some_and(|expected| {
                     use sha2::{Digest, Sha256};
                     std::fs::read(&destination).ok().is_some_and(|bytes|
-                        format!("{:x}", Sha256::digest(bytes)) == *expected)
+                        {
+                            let hash = format!("{:x}", Sha256::digest(bytes));
+                            expected.as_str() == Some(hash.as_str()) || expected.as_array().is_some_and(|values| values.iter().any(|value| value.as_str() == Some(hash.as_str())))
+                        })
                 });
             if (!destination.exists() || stock_upgrade) && entry.path().is_file() {
                 if let Err(error) = std::fs::copy(entry.path(), &destination) {

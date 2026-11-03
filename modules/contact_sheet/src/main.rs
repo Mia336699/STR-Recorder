@@ -21,7 +21,7 @@ use std::process::{Command, Stdio};
 /// Module metadata JSON, output via `--describe` argument.
 const DESCRIBE: &str = r#"{
     "id": "contact_sheet",
-    "name": "Contact Sheet 0.2.0",
+    "name": "Contact Sheet 0.3.2",
     "description": "每隔指定秒数截帧，拼合成一张带时间戳的预览图保存到视频同目录",
     "params": [
         {
@@ -139,6 +139,34 @@ fn ffmpeg_escape_path(path: &str) -> String {
     }
 }
 
+/// Use an available encoder and report the actual file extension to the host.
+fn output_format<'a>(requested: &'a str, encoders: &str) -> Result<&'a str, String> {
+    let has = |names: &[&str]| encoders.lines().any(|line| line.split_whitespace().nth(1).is_some_and(|name| names.contains(&name)));
+    let available = match requested {
+        "webp" => has(&["libwebp", "libwebp_anim", "webp"]),
+        "jpg" => has(&["mjpeg"]),
+        "png" => has(&["png"]),
+        _ => return Err(format!("Unsupported image format: {requested}")),
+    };
+    if available { Ok(requested) } else if has(&["png"]) { Ok("png") }
+    else { Err(format!("No encoder available for {requested} or PNG fallback")) }
+}
+
+#[cfg(test)]
+mod encoder_tests {
+    use super::output_format;
+    #[test]
+    fn chooses_requested_encoder_or_real_png_extension() {
+        assert_eq!(output_format("webp", " VF...D png PNG
+ V..... mjpeg MJPEG").unwrap(), "png");
+        assert_eq!(output_format("webp", " V..... libwebp WebP
+ V..... png PNG").unwrap(), "webp");
+        assert_eq!(output_format("jpg", " V..... mjpeg MJPEG").unwrap(), "jpg");
+        assert!(output_format("webp", " V..... not_png png description").is_err());
+        assert!(output_format("../other", " V..... png PNG").is_err());
+    }
+}
+
 /// 模块主逻辑：截帧 -> 叠加时间戳 -> 拼合网格图。
 /// Main module logic: extract frames -> overlay timestamps -> tile into grid.
 fn run() -> Result<(), String> {
@@ -158,7 +186,14 @@ fn run() -> Result<(), String> {
     let fontsize = param_u32("fontsize", 18).max(8);
     let tile_pad = 4u32;
     let quality = param_u32("quality", 100).clamp(1, 100);
-    let format = param("format", "webp");
+    let requested_format = param("format", "webp");
+    let encoders = Command::new("ffmpeg").args(["-hide_banner", "-encoders"]).output()
+        .map_err(|error| format!("Cannot inspect FFmpeg encoders: {error}"))?;
+    if !encoders.status.success() { return Err("FFmpeg encoder check failed".into()); }
+    let format = output_format(&requested_format, &String::from_utf8_lossy(&encoders.stdout))?.to_string();
+    if format != requested_format {
+        eprintln!("Warning: FFmpeg has no {requested_format} encoder; saving contact sheet as {format}");
+    }
     let fontfile_param = param("fontfile", "");
 
     // 确定字体文件路径（优先使用用户指定的）/ Determine font file path (user-specified takes priority)
