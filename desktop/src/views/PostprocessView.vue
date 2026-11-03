@@ -16,7 +16,7 @@
     - Auto-save with 600ms debounce
 -->
 <script setup lang="ts">
-	import { onMounted, computed, ref } from "vue";
+	import { onMounted, onBeforeUnmount, computed, ref, watch } from "vue";
 	import { usePostprocessStore, type PipelineNode } from "@/stores/postprocess";
 	import { useNotify } from "@/composables/useNotify";
 	import { Button } from "@/components/ui/button";
@@ -53,14 +53,23 @@
 	const { toast } = useNotify();
 	const { t } = useI18n();
 
-	onMounted(async () => {
-		await Promise.all([store.fetchModules(), store.fetchPipeline()]);
-		// 初始化模块监听器，当其他客户端更新流水线时显示提示
-		// Initialize module watcher; show notification when another client updates the pipeline
-		store.initModuleWatcher(() =>
-			toast(t("postprocess.updatedByOther"), "info"),
-		);
-	});
+	const selectedId = ref<string | null>(null);
+	const ready = ref(false), loadError = ref("");
+	async function initialize() {
+		ready.value = false; loadError.value = "";
+		try {
+			await Promise.all([store.fetchModules(), store.saving || store.saveError ? Promise.resolve() : store.fetchPipeline()]);
+			await store.initModuleWatcher(() => toast(t("postprocess.updatedByOther"), "info"));
+			ready.value = true;
+		} catch (error) { loadError.value = String(error); }
+	}
+	onMounted(initialize);
+	onBeforeUnmount(() => store.flushPendingSave());
+	watch(() => store.pipeline.nodes.map(node => node.nodeId), ids => {
+		if (!selectedId.value || !ids.includes(selectedId.value)) selectedId.value = ids[0] ?? null;
+	}, { immediate: true });
+	const selected = computed(() => nodesWithInfo.value.filter(item => item.node.nodeId === selectedId.value));
+	async function retrySave() { try { await store.savePipeline(); } catch {} }
 
 	/** 当前可用模块 ID 集合 / Set of currently available module IDs */
 	const availableModuleIds = computed(
@@ -159,6 +168,7 @@
 	 */
 	function addModule(id: string) {
 		store.addNode(id);
+		selectedId.value = store.pipeline.nodes[store.pipeline.nodes.length - 1]?.nodeId ?? null;
 		showPicker.value = false;
 	}
 
@@ -177,132 +187,40 @@
 </script>
 
 <template>
-	<div class="flex flex-col gap-6">
-		<header class="flex items-start justify-between">
-			<div>
-				<h1 class="text-xl font-bold mb-0.5">{{ t("postprocess.title") }}</h1>
-				<p class="text-sm text-muted-foreground">
-					{{ t("postprocess.description") }}
-				</p>
-			</div>
-			<span class="text-sm text-muted-foreground mt-0.5">
-				{{ store.saving ? t("postprocess.saving") : t("postprocess.saved") }}
-			</span>
-		</header>
-
-		<div class="relative">
-			<PipelineNodeBox :label="t('postprocess.input.label')" :description="t('postprocess.input.description')" fixed />
-			<div
-				v-if="store.pipeline.nodes.length > 0"
-				class="absolute left-1/2 -translate-x-1/2 w-0.5 h-6 bg-border"
-				style="bottom: -24px"
-			/>
-		</div>
-
-		<template v-if="store.pipeline.nodes.length > 0">
-			<div
-				v-for="({ node, info }, idx) in nodesWithInfo"
-				:key="node.nodeId"
-				class="relative"
-				:draggable="isDraggingHandle"
-				@dragstart="onDragStart($event, idx)"
-				@dragover="onDragOver($event, idx)"
-				@drop="onDrop($event, idx)"
-				@dragend="onDragEnd"
-			>
-				<div
-					class="border-2 rounded-xl p-4 bg-card transition-opacity"
-					:class="[
-						!node.enabled && 'opacity-50',
-						dragIndex === idx ? 'opacity-30' : '',
-						isModuleMissing(node)
-							? 'border-destructive/70 bg-destructive/5'
-							: dragOverIndex === idx && dragIndex !== idx
-								? 'border-primary'
-								: 'border-transparent',
-					]"
-				>
-					<div class="flex items-center gap-3">
-						<GripVertical
-							class="cursor-grab text-muted-foreground select-none size-5"
-							@mousedown="isDraggingHandle = true"
-							@mouseup="isDraggingHandle = false"
-						/>
-
-						<div class="flex-1 min-w-0">
-							<div class="flex items-center gap-2">
-								<span
-									class="font-medium text-sm"
-									:class="isModuleMissing(node) && 'text-destructive'"
-									>{{ info?.name ?? node.moduleId }}</span
-								>
-								<Badge
-									v-if="isModuleMissing(node)"
-									variant="destructive"
-									class="text-xs"
-									>{{ t("postprocess.node.missing") }}</Badge
-								>
-								<Badge
-									v-else-if="!node.enabled"
-									variant="secondary"
-									class="text-xs"
-									>{{ t("postprocess.node.skipped") }}</Badge
-								>
-							</div>
-							<p class="text-xs text-muted-foreground truncate">
-								{{ info?.description ?? "" }}
-							</p>
-						</div>
-
-						<div class="flex items-center gap-2 shrink-0">
-							<Button
-								variant="ghost"
-								size="icon"
-								class="h-7 w-7"
-								:disabled="idx === 0"
-								@click="store.moveNode(node.nodeId, 'up')"
-							><ChevronUp class="size-4" /></Button
-							>
-							<Button
-								variant="ghost"
-								size="icon"
-								class="h-7 w-7"
-								:disabled="idx === store.pipeline.nodes.length - 1"
-								@click="store.moveNode(node.nodeId, 'down')"
-							><ChevronDown class="size-4" /></Button
-							>
-
-							<span class="text-xs text-muted-foreground select-none"
-								>{{ t("postprocess.node.skip") }}</span
-							>
-							<Switch
-								:model-value="!node.enabled"
-								@update:model-value="node.enabled = !$event"
-							/>
-
-							<Button
-								variant="ghost"
-								size="icon"
-								class="h-7 w-7 text-destructive hover:text-destructive"
-								@click="store.removeNode(node.nodeId)"
-							><X class="size-4" /></Button
-							>
-						</div>
-					</div>
-
+ <div class="pipeline-view">
+  <header class="page-heading"><div><div class="eyebrow">WORKFLOW</div><h1>{{ t('postprocess.title') }}</h1><p>{{ t('postprocess.description') }}</p></div><span class="settings-save" role="status" :class="{'text-destructive':store.saveError}">{{ store.saveError ? t('ui.saveFailed') : store.saving ? t('ui.saving') : t('ui.saved') }}</span></header>
+  <div v-if="loadError" class="view-error" role="alert">{{ loadError }} <Button variant="outline" size="sm" @click="initialize">{{ t('ui.retry') }}</Button></div>
+  <div v-if="store.saveError" class="view-error" role="alert">{{ store.saveError }} <Button variant="outline" size="sm" @click="retrySave">{{ t('ui.retry') }}</Button></div>
+  <div v-if="!ready && !loadError" class="empty-state" role="status">{{ t('common.loading') }}</div>
+  <div v-if="ready" class="pipeline-workspace">
+   <section class="pipeline-flow" :aria-label="t('postprocess.title')">
+    <div class="pipeline-input"><span class="pipeline-step">↓</span><div><strong>{{ t('postprocess.input.label') }}</strong><p>{{ t('postprocess.input.description') }}</p></div></div>
+    <div v-for="({node,info},idx) in nodesWithInfo" :key="node.nodeId" class="pipeline-node" :class="{'is-selected': selectedId===node.nodeId,'is-skipped':!node.enabled,'is-missing':isModuleMissing(node),'is-drop-target':dragOverIndex===idx && dragIndex!==idx}" :draggable="isDraggingHandle" @dragstart="onDragStart($event,idx)" @dragover="onDragOver($event,idx)" @drop="onDrop($event,idx)" @dragend="onDragEnd">
+     <div class="pipeline-node-main"><span class="pipeline-grip" @mousedown="isDraggingHandle=true" @mouseup="isDraggingHandle=false"><GripVertical class="size-4" /></span><span class="pipeline-step">{{ String(idx+1).padStart(2,'0') }}</span><button class="pipeline-node-select" :aria-pressed="selectedId===node.nodeId" @click="selectedId=node.nodeId"><strong>{{ info?.name??node.moduleId }}</strong><small>{{ isModuleMissing(node)?t('postprocess.node.missing'):!node.enabled?t('ui.skipped'):t('ui.enabled') }}</small></button><Switch :model-value="node.enabled" :aria-label="`${t('ui.enabled')} ${info?.name??node.moduleId}`" @update:model-value="node.enabled=$event" /></div>
+     <p>{{ info?.description }}</p>
+     <div class="pipeline-node-actions"><Button variant="ghost" size="icon" :aria-label="t('ui.moveUp')" :disabled="idx===0" @click="store.moveNode(node.nodeId,'up')"><ChevronUp class="size-4" /></Button><Button variant="ghost" size="icon" :aria-label="t('ui.moveDown')" :disabled="idx===store.pipeline.nodes.length-1" @click="store.moveNode(node.nodeId,'down')"><ChevronDown class="size-4" /></Button><Button variant="ghost" size="icon" class="text-destructive" :aria-label="t('common.delete')" @click="store.removeNode(node.nodeId)"><X class="size-4" /></Button></div>
+    </div>
+    <p v-if="!store.pipeline.nodes.length" class="empty-state">{{ t('postprocess.empty') }}</p>
+    <Button variant="outline" class="pipeline-add" @click="openPicker">{{ t('postprocess.addModule') }}</Button>
+    <p class="pipeline-footnote">{{ t('postprocess.stats',{enabled:enabledNodes.length,total:store.pipeline.nodes.length}) }} · {{ t('ui.pipelineHint') }}</p>
+   </section>
+   <aside class="pipeline-inspector" :aria-label="t('ui.moduleParameters')">
+    <header><div class="eyebrow">INSPECTOR</div><h2>{{ t('ui.moduleParameters') }}</h2></header>
+    <template v-for="{node,info} in selected" :key="node.nodeId"><h3>{{ info?.name??node.moduleId }}</h3><p class="pipeline-description">{{ info?.description }}</p><p v-if="isModuleMissing(node)" class="view-error" role="alert">{{ t('postprocess.node.missing') }}</p>
 					<div
 						v-if="info?.params.length"
-						class="mt-3 grid grid-cols-2 gap-x-4 gap-y-3"
+						class="pipeline-parameters"
 					>
 						<template
 							v-for="param in info.params"
 							:key="`${node.nodeId}__${param.key}`"
 						>
 							<div class="flex flex-col gap-1.5">
-								<Label class="text-xs">{{ param.label }}</Label>
+								<Label class="text-xs" :for="`${node.nodeId}__${param.key}`">{{ param.label }}</Label>
 
 								<Switch
 									v-if="param.type === 'boolean'"
+ :id="`${node.nodeId}__${param.key}`" :aria-label="param.label"
 									:model-value="
 										node.params[param.key] === true ||
 										node.params[param.key] === 'true'
@@ -317,7 +235,7 @@
 										node.params[param.key] = String($event ?? param.default)
 									"
 								>
-									<SelectTrigger size="sm" class="w-full">
+									<SelectTrigger :id="`${node.nodeId}__${param.key}`" :aria-label="param.label" size="sm" class="w-full">
 										<SelectValue />
 									</SelectTrigger>
 									<SelectContent>
@@ -338,12 +256,12 @@
 								>
 									<NumberFieldContent>
 										<NumberFieldDecrement />
-										<NumberFieldInput />
+										<NumberFieldInput :id="`${node.nodeId}__${param.key}`" :aria-label="param.label" />
 										<NumberFieldIncrement />
 									</NumberFieldContent>
 								</NumberField>
 
-								<Input
+								<Input :id="`${node.nodeId}__${param.key}`" :aria-label="param.label"
 									v-else
 									:model-value="String(node.params[param.key] ?? param.default)"
 									class="h-8 text-sm"
@@ -352,29 +270,10 @@
 							</div>
 						</template>
 					</div>
-				</div>
-
-				<div
-					v-if="idx < store.pipeline.nodes.length - 1"
-					class="absolute left-1/2 -translate-x-1/2 w-0.5 h-6 bg-border"
-					style="bottom: -24px"
-				/>
-			</div>
-		</template>
-
-		<div class="flex flex-col items-center gap-2">
-			<div
-				v-if="store.pipeline.nodes.length === 0"
-				class="text-sm text-muted-foreground"
-			>
-				{{ t("postprocess.empty") }}
-			</div>
-
-			<Button variant="outline" size="sm" @click="openPicker">
-				{{ t("postprocess.addModule") }}
-			</Button>
-		</div>
-
+    <p v-if="info && !info.params.length" class="pipeline-description">{{ t('ui.noModuleParameters') }}</p></template>
+    <p v-if="!selected.length" class="empty-state">{{ t('ui.selectModule') }}</p>
+   </aside>
+  </div>
 		<Dialog :open="showPicker" @update:open="showPicker = $event">
 			<DialogContent class="max-w-sm">
 				<DialogHeader>
@@ -410,11 +309,5 @@
 			</DialogContent>
 		</Dialog>
 
-		<div
-			v-if="store.pipeline.nodes.length > 0"
-			class="text-xs text-muted-foreground text-center"
-		>
-			{{ t("postprocess.stats", { enabled: enabledNodes.length, total: store.pipeline.nodes.length }) }}
-		</div>
-	</div>
+ </div>
 </template>

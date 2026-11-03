@@ -10,7 +10,7 @@
  */
 
 import { defineStore } from "pinia";
-import { ref, watch } from "vue";
+import { ref, watch, nextTick } from "vue";
 import { call, on } from "@/lib/api";
 import { useI18n } from "vue-i18n";
 import { useModuleLocaleStore } from "@/stores/moduleLocale";
@@ -114,6 +114,10 @@ export const usePostprocessStore = defineStore("postprocess", () => {
 	const loading = ref(false);
 	/** 是否正在保存 / Whether saving */
 	const saving = ref(false);
+	const saveError = ref("");
+	let saveChain: Promise<void> = Promise.resolve();
+	let revision = 0, pending = 0;
+	let localReset: ReturnType<typeof setTimeout> | undefined;
 	/** 是否正在本地保存（用于过滤自身触发的 pipeline-updated 事件）/ Whether saving locally (to filter self-triggered pipeline-updated events) */
 	let _isSavingLocally = false;
 	/** 流水线是否已从后端加载完成（防止初始化前触发自动保存）/ Whether pipeline has been loaded from backend (prevents auto-save before init) */
@@ -187,28 +191,44 @@ export const usePostprocessStore = defineStore("postprocess", () => {
 	async function fetchPipeline() {
 		loading.value = true;
 		try {
-			pipeline.value = await call<PipelineConfig>("get_pipeline");
-		} finally {
-			loading.value = false;
+			const value = await call<PipelineConfig>("get_pipeline");
+			_loaded = false;
+			pipeline.value = value;
+			await nextTick();
 			_loaded = true;
-		}
+		} finally { loading.value = false; }
 	}
 
 	/**
 	 * 将当前流水线配置保存到后端。
 	 * Save the current pipeline configuration to the backend.
 	 */
-	async function savePipeline() {
-		saving.value = true;
-		_isSavingLocally = true;
-		try {
-			await call("save_pipeline", { pipeline: pipeline.value });
-		} finally {
-			saving.value = false;
-			setTimeout(() => {
-				_isSavingLocally = false;
-			}, 500);
-		}
+	function savePipeline(): Promise<void> {
+		if (_saveTimer) { clearTimeout(_saveTimer); _saveTimer = null; }
+		const snapshot = JSON.parse(JSON.stringify(pipeline.value)) as PipelineConfig;
+		const current = ++revision;
+		pending++; saving.value = true; _isSavingLocally = true;
+		clearTimeout(localReset); saveError.value = "";
+		const task = saveChain.then(async () => {
+			try {
+				await call("save_pipeline", { pipeline: snapshot });
+				if (current === revision) saveError.value = "";
+			} catch (error) {
+				if (current === revision) saveError.value = String(error);
+				throw error;
+			} finally {
+				pending--;
+				if (!pending) {
+					saving.value = false;
+					localReset = setTimeout(() => { _isSavingLocally = false; }, 500);
+				}
+			}
+		});
+		saveChain = task.catch(() => {});
+		return task;
+	}
+	function flushPendingSave() {
+		if (_saveTimer) void savePipeline().catch(() => {});
 	}
 
 	// 监听流水线变化，防抖 600ms 后自动保存
@@ -217,8 +237,9 @@ export const usePostprocessStore = defineStore("postprocess", () => {
 		pipeline,
 		() => {
 			if (!_loaded) return;
+			saving.value = true;
 			if (_saveTimer) clearTimeout(_saveTimer);
-			_saveTimer = setTimeout(() => savePipeline(), 600);
+			_saveTimer = setTimeout(() => { _saveTimer = null; void savePipeline().catch(() => {}); }, 600);
 		},
 		{ deep: true },
 	);
@@ -290,16 +311,15 @@ export const usePostprocessStore = defineStore("postprocess", () => {
 		await on("modules-changed", () => {
 			void fetchModules();
 		});
-		await on("pipeline-updated", (payload) => {
+		await on("pipeline-updated", async (payload) => {
 			// 本地保存时忽略自身触发的事件 / Ignore self-triggered events during local save
-			if (_isSavingLocally) return;
+			if (_isSavingLocally || _saveTimer || saveError.value) return;
 			// 暂时禁用自动保存，防止接收到的配置被立即重新保存
 			// Temporarily disable auto-save to prevent received config from being immediately re-saved
 			_loaded = false;
 			pipeline.value = payload as PipelineConfig;
-			setTimeout(() => {
-				_loaded = true;
-			}, 0);
+			await nextTick();
+			_loaded = true;
 			_onPipelineUpdated?.();
 		});
 	}
@@ -309,6 +329,8 @@ export const usePostprocessStore = defineStore("postprocess", () => {
 		pipeline,
 		loading,
 		saving,
+		saveError,
+		flushPendingSave,
 		fetchModules,
 		fetchPipeline,
 		savePipeline,
