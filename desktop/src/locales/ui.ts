@@ -1,4 +1,5 @@
 export const zhUI = {
+  globalAutoDisabled: '全局自动录制已关闭，可在录制设置中开启。',
   workbench: '直播录制工作台', navigation: '主导航', disk: '录制磁盘', available: '可用 {size}',
   all: '全部', online: '在线', recording: '录制中', watching: '观看中', search: '搜索主播名称',
   onlineFirst: '在线优先', nameOrder: '名称 A–Z', sort: '主播排序', compact: '紧凑', standard: '标准',
@@ -31,6 +32,7 @@ export const zhUI = {
 };
 
 export const enUI: typeof zhUI = {
+  globalAutoDisabled: 'Global auto-record is disabled. Enable it in Recording settings.',
   workbench: 'Live recording workspace', navigation: 'Main navigation', disk: 'Recording disk', available: '{size} available',
   all: 'All', online: 'Online', recording: 'Recording', watching: 'Watching', search: 'Search streamers',
   onlineFirst: 'Online first', nameOrder: 'Name A–Z', sort: 'Streamer order', compact: 'Compact', standard: 'Standard',

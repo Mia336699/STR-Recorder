@@ -90,9 +90,9 @@ export const useStreamersStore = defineStore("streamers", () => {
 	 *
 	 * @param username - 主播用户名 / Streamer username
 	 */
-	async function addStreamer(username: string) {
+	async function addStreamer(username: string, autoRecord = false) {
 		markLocal(`add:${username}`);
-		await call("add_streamer", { username });
+		await call("add_streamer", { username, autoRecord });
 		await fetchStreamers();
 	}
 

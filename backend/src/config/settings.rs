@@ -354,11 +354,16 @@ impl AppState {
     /// 添加新主播到追踪列表（若已存在则返回错误）。
     /// Add a new streamer to the tracking list (returns error if already exists).
     pub fn add_streamer(&self, username: &str) -> Result<()> {
+        self.add_streamer_with_auto_record(username, None)
+    }
+
+    /// Set the initial flag atomically so a poll cannot start an opted-out room.
+    pub fn add_streamer_with_auto_record(&self, username: &str, requested: Option<bool>) -> Result<()> {
         let mut data = self.data.write();
         if data.streamers.iter().any(|s| s.username == username) {
             return Err(AppError::Other(format!("模特 {} 已存在", username)));
         }
-        let auto_record = data.settings.auto_record;
+        let auto_record = requested.unwrap_or(data.settings.auto_record);
         data.streamers.push(StreamerData {
             username: username.to_string(),
             auto_record,

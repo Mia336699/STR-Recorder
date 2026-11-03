@@ -65,6 +65,7 @@ pub async fn list_streamers(state: State<'_, DesktopState>) -> CmdResult<serde_j
 #[tauri::command]
 pub async fn add_streamer(
     username: String,
+    auto_record: Option<bool>,
     state: State<'_, DesktopState>,
 ) -> CmdResult<serde_json::Value> {
     let settings = state.app_state.get_settings();
@@ -79,7 +80,7 @@ pub async fn add_streamer(
     )
     .map_err(map_err)?;
     api.get_stream_info(&username, false).await.map_err(map_err)?;
-    state.app_state.add_streamer(&username).map_err(map_err)?;
+    state.app_state.add_streamer_with_auto_record(&username, Some(auto_record.unwrap_or(false))).map_err(map_err)?;
     state.emitter.emit("streamer-added", &serde_json::json!({ "username": username }));
     let emitter = Arc::clone(&state.emitter);
     let monitor = Arc::clone(&state.monitor);
@@ -182,7 +183,7 @@ pub async fn verify_streamer(
     )
     .map_err(map_err)?;
     match api.get_stream_info(&username, false).await {
-        Ok(_) => Ok(serde_json::json!({ "exists": true })),
+        Ok(info) => Ok(serde_json::json!({ "exists": true, "is_online": info.is_online, "is_recordable": info.is_recordable, "status": info.status })),
         Err(AppError::UserNotFound(_)) => Ok(serde_json::json!({ "exists": false })),
         Err(e) => Err(e.to_string()),
     }
