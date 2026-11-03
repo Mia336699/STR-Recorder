@@ -19,6 +19,7 @@
 	import { onMounted, onUnmounted, ref, computed } from "vue";
 	import { RouterView, useRouter, useRoute } from "vue-router";
 	import { LayoutGrid, FolderOpen, Workflow, Search, Settings2 } from "@lucide/vue";
+	import { applyAppearance } from "@/composables/useAppearance";
 	import appIcon from "./assets/str-icon.png";
 	import { formatSize } from "@/utils/format";
 	import NotifyLayer from "./components/NotifyLayer.vue";
@@ -65,7 +66,7 @@
 	 * @param dark - 是否应用深色主题 / Whether to apply dark theme
 	 */
 	function applyTheme(dark: boolean) {
-		document.documentElement.classList.toggle("dark", dark);
+		applyAppearance(dark);
 	}
 
 	// 监听系统主题变化 / Listen for system theme changes

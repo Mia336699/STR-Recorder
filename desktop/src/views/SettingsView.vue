@@ -1,677 +1,84 @@
-<!--
-    应用设置页面 / Application Settings View
-
-    提供录制器的全局配置界面，包括：
-    - 录制输出目录（支持系统目录选择器）
-    - 最大并发录制数、轮询间隔、首选分辨率及回退方向、合并格式
-    - 网络代理：API 代理、Stripchat 镜像站、CDN 代理
-    - Mouflon HLS 解密密钥管理（pkey/pdkey 对）
-
-    大多数设置在失焦或按回车时自动保存；
-    部分设置（轮询间隔、并发数、分辨率选择、合并格式）通过 watch 自动保存。
-    支持多客户端实时同步：其他客户端修改设置时自动更新表单。
-
-    Provides global recorder configuration UI including:
-    - Recording output directory (with system directory picker)
-    - Max concurrent recordings, poll interval, preferred resolution and fallback direction, merge format
-    - Network proxies: API proxy, Stripchat mirror, CDN proxy
-    - Mouflon HLS decryption key management (pkey/pdkey pairs)
-
-    Most settings auto-save on blur or Enter key;
-    some settings (poll interval, concurrency, resolution selection, merge format) auto-save via watch.
-    Supports real-time multi-client sync: form updates when another client changes settings.
--->
 <script setup lang="ts">
-	import { onMounted, onUnmounted, reactive, ref, watch, nextTick } from "vue";
-	import { call, on } from "@/lib/api";
-	import { useSettingsStore, type Settings, type MouflonKeysStore } from "../stores/settings";
-	import { useNotify } from "../composables/useNotify";
-	import { Button } from "@/components/ui/button";
-	import { Input } from "@/components/ui/input";
-	import { Label } from "@/components/ui/label";
-	import {
-		NumberField,
-		NumberFieldContent,
-		NumberFieldDecrement,
-		NumberFieldIncrement,
-		NumberFieldInput,
-	} from "@/components/ui/number-field";
-	import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-	import {
-		Select,
-		SelectContent,
-		SelectItem,
-		SelectTrigger,
-		SelectValue,
-	} from "@/components/ui/select";
-	import { useI18n } from "vue-i18n";
-	import { loadLocaleFromServer } from "@/i18n";
-	import { useModuleLocaleStore } from "@/stores/moduleLocale";
-	import { useLocalesStore } from "@/stores/locales";
-
-	const store = useSettingsStore();
-	const { toast, confirm } = useNotify();
-	const { t, locale } = useI18n();
-	const moduleLocaleStore = useModuleLocaleStore();
-	const localesStore = useLocalesStore();
-	const resolutionDirections = ["lower", "higher"] as const;
-
-	/** 可用语言列表（从共享 store 读取，由 App.vue 统一维护）
-	 * Available locales (from shared store, maintained by App.vue) */
-	// 直接使用 store 的 ref，保持响应式；不能赋给普通变量（会丢失响应式）
-	// Use the store's ref directly to keep reactivity; assigning to a plain variable breaks it
-
-	async function setLocale(lang: string) {
-		// 先加载消息，再切换 locale，避免 vue-i18n 在消息就绪前以 fallback 语言渲染
-		// Load messages first, then switch locale to avoid vue-i18n rendering with fallback
-		const { modules: moduleLocales, warning } = await loadLocaleFromServer(lang);
-		locale.value = lang;
-		// 将语言写入 settings 持久化 / Persist language to settings
-		form.language = lang;
-		await store.saveSettings({ ...form, language: lang });
-		toast(t("settings.saved"), "success");
-		moduleLocaleStore.setLocales(lang, moduleLocales);
-		if (warning) {
-			toast(t("settings.localeFileInvalid", { file: `${lang}.json` }) + ": " + warning, "warning");
-		}
-	}
-
-	/** 表单响应式数据（与 store.settings 保持同步）/ Reactive form data (synced with store.settings) */
-	const form = reactive<Settings>({
-		output_dir: "",
-		poll_interval_secs: 30,
-		auto_record: true,
-		api_proxy_url: null,
-		cdn_proxy_url: null,
-		sc_mirror_url: null,
-		max_concurrent: 0,
-		max_recording_duration_secs: 0,
-		merge_format: "mp4",
-		preferred_resolution: 0,
-		resolution_preference: "lower",
-		max_tmp_dir_gb: 50,
-		language: "zh-CN",
-		mouflon_sync_url: null,
-		mouflon_sync_token: null,
-		setup_done: true,
-	});
-
-	// 保存各代理字段的原始值，用于检测是否有实际变更
-	// Store original values for proxy fields to detect actual changes
-	const originalOutputDir = ref("");
-	const originalApiProxy = ref<string | null>(null);
-	const originalCdnProxy = ref<string | null>(null);
-	const originalScMirror = ref<string | null>(null);
-	const originalMouflonSyncUrl = ref<string | null>(null);
-	const originalMouflonSyncToken = ref<string | null>(null);
-	/** 是否已完成初始化（防止初始化时触发自动保存）/ Whether initialization is complete (prevents auto-save during init) */
-	let initialized = false;
-
-	const unlisteners: (() => void)[] = [];
-
-	onMounted(async () => {
-		await store.initListeners();
-		await store.fetchSettings();
-		Object.assign(form, store.settings);
-		originalOutputDir.value = form.output_dir;
-		originalApiProxy.value = form.api_proxy_url;
-		originalCdnProxy.value = form.cdn_proxy_url;
-		originalScMirror.value = form.sc_mirror_url;
-		originalMouflonSyncUrl.value = form.mouflon_sync_url;
-		originalMouflonSyncToken.value = form.mouflon_sync_token;
-		await nextTick();
-		initialized = true;
-		await loadKeys();
-
-		// 监听其他客户端的 Mouflon 密钥更新 / Listen for Mouflon key updates from other clients
-		unlisteners.push(
-			await on("mouflon-keys-updated", (payload) => {
-				const store = payload as MouflonKeysStore;
-				mouflonStore.value = store;
-				toast(t("settings.mouflonUpdatedByOther"), "info");
-			}),
-		);
-	});
-
-	onUnmounted(() => {
-		unlisteners.forEach((fn) => fn());
-	});
-
-	// 监听不需要确认的设置字段，变更时自动保存
-	// Watch settings fields that don't require confirmation, auto-save on change
-	watch(
-		() => ({
-			poll_interval_secs: form.poll_interval_secs,
-			auto_record: form.auto_record,
-			max_concurrent: form.max_concurrent,
-			max_recording_duration_secs: form.max_recording_duration_secs,
-			merge_format: form.merge_format,
-			preferred_resolution: form.preferred_resolution,
-			resolution_preference: form.resolution_preference,
-			max_tmp_dir_gb: form.max_tmp_dir_gb,
-		}),
-		async () => {
-			if (!initialized) return;
-			await store.saveSettings({ ...form });
-			toast(t("settings.saved"), "success");
-		},
-		{ deep: true },
-	);
-
-	// 监听 store.settings 变化（来自其他客户端），同步到表单
-	// Watch store.settings changes (from other clients) and sync to form
-	watch(
-		() => store.settings,
-		(newSettings) => {
-			if (!initialized || store.isSavingLocally) return;
-			initialized = false;
-			Object.assign(form, newSettings);
-			originalOutputDir.value = newSettings.output_dir;
-			originalApiProxy.value = newSettings.api_proxy_url;
-			originalCdnProxy.value = newSettings.cdn_proxy_url;
-			originalScMirror.value = newSettings.sc_mirror_url;
-			originalMouflonSyncUrl.value = newSettings.mouflon_sync_url;
-			originalMouflonSyncToken.value = newSettings.mouflon_sync_token;
-			nextTick(() => {
-				initialized = true;
-			});
-			toast(t("settings.updatedByOther"), "info");
-		},
-		{ deep: true },
-	);
-
-	/**
-	 * 保存代理相关字段（仅在值有实际变更时保存）。
-	 * Save a proxy-related field (only if the value actually changed).
-	 *
-	 * @param field - 要保存的设置字段名 / Settings field name to save
-	 */
-	async function saveProxy(
-		field: "api_proxy_url" | "cdn_proxy_url" | "sc_mirror_url" | "mouflon_sync_url" | "mouflon_sync_token",
-	) {
-		if (!initialized) return;
-		const originalMap = {
-			api_proxy_url: originalApiProxy,
-			cdn_proxy_url: originalCdnProxy,
-			sc_mirror_url: originalScMirror,
-			mouflon_sync_url: originalMouflonSyncUrl,
-			mouflon_sync_token: originalMouflonSyncToken,
-		};
-		const original = originalMap[field];
-		if (form[field] === original.value) return;
-		await store.saveSettings({ ...form });
-		original.value = form[field];
-		toast(t("settings.saved"), "success");
-	}
-
-	/**
-	 * 保存输出目录（需要用户确认，因为会影响正在进行的录制）。
-	 * Save the output directory (requires user confirmation as it affects ongoing recordings).
-	 */
-	async function saveOutputDir() {
-		if (!initialized) return;
-		if (form.output_dir === originalOutputDir.value) return;
-		const ok = await confirm({
-			title: t("settings.outputDir.changeTitle"),
-			message: t("settings.outputDir.changeMessage", { dir: form.output_dir }),
-			confirmText: t("settings.outputDir.changeConfirm"),
-		});
-		if (ok) {
-			await store.saveSettings({ ...form });
-			originalOutputDir.value = form.output_dir;
-			toast(t("settings.outputDir.changeDone"), "info");
-		} else {
-			// 用户取消时恢复原始值 / Restore original value if user cancels
-			form.output_dir = originalOutputDir.value;
-		}
-	}
-
-	/** Mouflon 密钥存储（含时间戳）/ Mouflon key store (with timestamps) */
-	const mouflonStore = ref<MouflonKeysStore>({ keys: {}, auto_synced_at: null, manual_updated_at: null });
-	/** 新密钥表单：pkey 输入值 / New key form: pkey input value */
-	const newPkey = ref("");
-	/** 新密钥表单：pdkey 输入值 / New key form: pdkey input value */
-	const newPdkey = ref("");
-	/** 密钥添加错误信息 / Key addition error message */
-	const keyError = ref("");
-	/** 是否正在手动同步 / Whether manual sync is in progress */
-	const syncing = ref(false);
-
-	/**
-	 * 从后端加载 Mouflon 密钥列表。
-	 * Load the Mouflon key list from the backend.
-	 */
-	async function loadKeys() {
-		mouflonStore.value = await call<MouflonKeysStore>("list_mouflon_keys");
-	}
-
-	/**
-	 * 添加新的 Mouflon 密钥对。
-	 * Add a new Mouflon key pair.
-	 */
-	async function addKey() {
-		keyError.value = "";
-		const pkey = newPkey.value.trim();
-		const pdkey = newPdkey.value.trim();
-		if (!pkey || !pdkey) {
-			keyError.value = t("settings.keyError.empty");
-			return;
-		}
-		try {
-			await call("add_mouflon_key", { pkey, pdkey });
-			newPkey.value = "";
-			newPdkey.value = "";
-			await loadKeys();
-		} catch (e: any) {
-			keyError.value = String(e);
-		}
-	}
-
-	/**
-	 * 删除指定的 Mouflon 密钥。
-	 * Remove a specific Mouflon key.
-	 *
-	 * @param pkey - 要删除的密钥标识符 / Key identifier to remove
-	 */
-	async function removeKey(pkey: string) {
-		await call("remove_mouflon_key", { pkey });
-		await loadKeys();
-	}
-
-	/**
-	 * 手动触发一次从同步 URL 拉取密钥。
-	 * Manually trigger a key sync from the configured URL.
-	 */
-	async function syncKeys() {
-		syncing.value = true;
-		try {
-			const updated = await call<boolean>("sync_mouflon_keys");
-			await loadKeys();
-			toast(updated ? t("settings.mouflonSyncDone") : t("settings.mouflonSyncUpToDate"), "success");
-		} catch (e: any) {
-			toast(t("settings.mouflonSyncFailed", { error: String(e) }), "error");
-		} finally {
-			syncing.value = false;
-		}
-	}
-
-	/** 格式化 RFC 3339 时间戳为本地时间字符串 / Format RFC 3339 timestamp to local time string */
-	function formatTs(ts: string | null): string {
-		if (!ts) return t("settings.mouflonNever");
-		return new Date(ts).toLocaleString();
-	}
+import { ref, reactive, computed, watch, onMounted, onUnmounted, onBeforeUnmount, nextTick } from 'vue';
+import { useI18n } from 'vue-i18n';
+import { call, on } from '@/lib/api';
+import { useSettingsStore, type Settings, type MouflonKeysStore } from '@/stores/settings';
+import { useLocalesStore } from '@/stores/locales';
+import { useModuleLocaleStore } from '@/stores/moduleLocale';
+import { loadLocaleFromServer } from '@/i18n';
+import { useNotify } from '@/composables/useNotify';
+import { appearance, setAppearance, type Appearance } from '@/composables/useAppearance';
+import SettingsField from '@/components/SettingsField.vue';
+import { Button } from '@/components/ui/button';
+import { Switch } from '@/components/ui/switch';
+import { FolderOpen, Eye, EyeOff, RefreshCw, Plus, Check, Loader2 } from '@lucide/vue';
+const store=useSettingsStore(),localesStore=useLocalesStore(),moduleLocaleStore=useModuleLocaleStore();
+const {t,locale}=useI18n();const {toast,confirm}=useNotify();
+const pane=ref('recording');const panes=['general','recording','network','platforms'];
+const form=reactive<Settings>({...store.settings});
+const ready=ref(false),loadError=ref(''),validationError=ref(''),choosing=ref(false),customDuration=ref(false);
+const keyStore=ref<MouflonKeysStore>({keys:{},auto_synced_at:null,manual_updated_at:null});
+const keyError=ref(''),keyBusy=ref(false),syncMessage=ref(''),newPkey=ref(''),newPdkey=ref('');
+const visibleKeys=ref(new Set<string>());
+const themeOptions:Appearance[]=['system','dark','light'];
+const keys=computed(()=>Object.entries(keyStore.value.keys));
+const errorMessage=computed(()=>validationError.value||store.saveError||'');
+const customShown=computed(()=>customDuration.value||![0,900,1800,3600].includes(form.max_recording_duration_secs));
+const qualities=computed(()=>[...new Set([0,2160,1440,1080,720,480,360,240,160,form.preferred_resolution])].sort((a,b)=>b-a));
+let initialized=false;let saveTimer:ReturnType<typeof setTimeout>|undefined;let unlisten:(()=>void)|undefined;
+async function initialize(){loadError.value='';ready.value=false;initialized=false;try{await store.initListeners();await store.fetchSettings();Object.assign(form,store.settings);if(!localesStore.loaded)await localesStore.refresh();await nextTick();ready.value=true;initialized=true;await loadKeys();}catch(e){loadError.value=String(e);}}
+onMounted(async()=>{await initialize();unlisten=await on('mouflon-keys-updated',payload=>{keyStore.value=payload as MouflonKeysStore;visibleKeys.value.clear();});});
+onBeforeUnmount(()=>{if(saveTimer){clearTimeout(saveTimer);saveTimer=undefined;void persist();}});
+onUnmounted(()=>{unlisten?.();});
+watch(pane,()=>visibleKeys.value.clear());
+watch(()=>store.settings,async value=>{if(!initialized||store.isSavingLocally)return;initialized=false;Object.assign(form,value);await nextTick();initialized=true;});
+watch(()=>[form.poll_interval_secs,form.auto_record,form.max_concurrent,form.max_recording_duration_secs,form.merge_format,form.preferred_resolution,form.resolution_preference,form.max_tmp_dir_gb],()=>{if(initialized){clearTimeout(saveTimer);saveTimer=setTimeout(()=>{saveTimer=undefined;void persist();},250);}});
+function validatedSnapshot():Settings|null{
+ const value={...form};
+ for(const key of ['api_proxy_url','cdn_proxy_url','sc_mirror_url','mouflon_sync_url','mouflon_sync_token'] as const)value[key]=value[key]?.trim()||null;
+ for(const [key,min] of [['poll_interval_secs',1],['max_concurrent',0],['max_recording_duration_secs',0],['preferred_resolution',0],['max_tmp_dir_gb',0]] as const){if(!Number.isSafeInteger(value[key])||value[key]<min){validationError.value=t('ui.invalidSetting');return null;}}
+ if(!value.output_dir.startsWith('/')){validationError.value=t('ui.absoluteDirectory');return null;}
+ for(const key of ['api_proxy_url','cdn_proxy_url','mouflon_sync_url'] as const){if(!value[key])continue;try{const url=new URL(value[key]);const protocols=key==='mouflon_sync_url'?['http:','https:']:['http:','https:','socks5:','socks5h:'];if(!url.hostname||!protocols.includes(url.protocol))throw new Error();}catch{validationError.value=t('ui.invalidNetwork');return null;}}
+ if(value.sc_mirror_url&&!/^[a-z0-9.-]+(?::\d+)?$/i.test(value.sc_mirror_url)){validationError.value=t('ui.invalidMirror');return null;}
+ validationError.value='';return value;
+}
+async function persist(){if(!initialized)return false;clearTimeout(saveTimer);const value=validatedSnapshot();if(!value)return false;try{await store.saveSettings(value);return true;}catch{return false;}}
+async function saveDirectory(){if(!ready.value||form.output_dir===store.settings.output_dir)return;const previous=store.settings.output_dir;const ok=await confirm({title:t('settings.outputDir.changeTitle'),message:t('settings.outputDir.changeMessage',{dir:form.output_dir}),confirmText:t('settings.outputDir.changeConfirm')});if(ok)await persist();else form.output_dir=previous;}
+async function chooseDirectory(){choosing.value=true;try{const path=await call<string|null>('choose_recording_directory',{title:t('ui.chooseFolderTitle')});if(path){form.output_dir=path;await saveDirectory();}}catch(e){validationError.value=String(e);}finally{choosing.value=false;}}
+async function changeLocale(){if(!await persist())return;try{const result=await loadLocaleFromServer(form.language);locale.value=form.language;moduleLocaleStore.setLocales(form.language,result.modules);if(result.warning)toast(t('settings.localeFileInvalid',{file:`${form.language}.json`})+': '+result.warning,'warning');}catch(e){validationError.value=String(e);}}
+function changeAppearance(value:Appearance){try{setAppearance(value);}catch(e){validationError.value=String(e);}}
+function setDuration(seconds:number){customDuration.value=false;form.max_recording_duration_secs=seconds;}
+async function loadKeys(){try{keyStore.value=await call<MouflonKeysStore>('list_mouflon_keys');}catch(e){keyError.value=String(e);}}
+function reveal(key:string){if(visibleKeys.value.has(key))visibleKeys.value.delete(key);else visibleKeys.value.add(key);}
+async function addKey(){keyError.value='';if(!newPkey.value.trim()||!newPdkey.value.trim()){keyError.value=t('settings.keyError.empty');return;}keyBusy.value=true;try{await call('add_mouflon_key',{pkey:newPkey.value.trim(),pdkey:newPdkey.value.trim()});newPkey.value='';newPdkey.value='';await loadKeys();}catch(e){keyError.value=String(e);}finally{keyBusy.value=false;}}
+async function removeKey(pkey:string){if(!await confirm({title:t('common.delete'),message:t('ui.removeKeyHint'),confirmText:t('common.delete'),danger:true}))return;keyBusy.value=true;try{await call('remove_mouflon_key',{pkey});visibleKeys.value.delete(pkey);await loadKeys();}catch(e){keyError.value=String(e);}finally{keyBusy.value=false;}}
+async function syncKeys(){if(!await persist())return;keyBusy.value=true;keyError.value='';syncMessage.value='';try{const changed=await call<boolean>('sync_mouflon_keys');await loadKeys();syncMessage.value=t(changed?'settings.mouflonSyncDone':'settings.mouflonSyncUpToDate');}catch(e){keyError.value=t('settings.mouflonSyncFailed',{error:String(e)});}finally{keyBusy.value=false;}}
+function date(value:string|null){return value?new Date(value).toLocaleString(locale.value):t('settings.mouflonNever');}
 </script>
-
 <template>
-	<div class="flex flex-col gap-5 max-w-160">
-		<h1 class="text-xl font-bold">{{ t("settings.title") }}</h1>
-
-		<div v-if="store.loading" class="text-muted-foreground">{{ t("settings.loading") }}</div>
-
-		<form v-else class="flex flex-col gap-7">
-			<section class="flex flex-col gap-3.5">
-				<h2
-					class="text-xs font-bold uppercase tracking-widest text-muted-foreground pb-2 border-b"
-				>
-					{{ t("settings.sections.language") }}
-				</h2>
-				<div class="flex flex-col gap-1.5">
-					<Label>{{ t("settings.language.label") }}</Label>
-					<RadioGroup
-						:model-value="String(locale)"
-						class="flex flex-row gap-4"
-						@update:model-value="(v) => v && setLocale(String(v))"
-					>
-						<div
-							v-for="loc in localesStore.locales"
-							:key="loc.code"
-							class="flex items-center gap-2"
-						>
-							<RadioGroupItem :id="`lang-${loc.code}`" :value="loc.code" />
-							<Label :for="`lang-${loc.code}`" class="cursor-pointer">{{ loc.name }}</Label>
-						</div>
-					</RadioGroup>
-				</div>
-			</section>
-
-			<section class="flex flex-col gap-3.5">
-				<h2
-					class="text-xs font-bold uppercase tracking-widest text-muted-foreground pb-2 border-b"
-				>
-					{{ t("settings.sections.recording") }}
-				</h2>
-
-				<div class="flex flex-col gap-1.5">
-					<Label>{{ t("settings.outputDir.label") }}</Label>
-					<Input
-						v-model="form.output_dir"
-						:placeholder="t('settings.outputDir.placeholder')"
-						autocomplete="off"
-						@keyup.enter="saveOutputDir"
-						@blur="saveOutputDir"
-					/>
-					<p class="text-xs text-muted-foreground">
-						{{ t("settings.outputDir.hint") }}
-					</p>
-				</div>
-
-				<div class="flex flex-col gap-1.5">
-					<Label>{{ t("settings.recordingDuration.label") }}</Label>
-					<NumberField
-						:model-value="form.max_recording_duration_secs"
-						:min="0"
-						:max="Number.MAX_SAFE_INTEGER"
-						:step="1"
-						class="w-40"
-						@update:model-value="(v) => v !== undefined && Number.isSafeInteger(v) && (form.max_recording_duration_secs = Math.max(0, v))"
-					>
-						<NumberFieldContent>
-							<NumberFieldDecrement />
-							<NumberFieldInput />
-							<NumberFieldIncrement />
-						</NumberFieldContent>
-					</NumberField>
-					<p class="text-xs text-muted-foreground">{{ t("settings.recordingDuration.hint") }}</p>
-				</div>
-
-				<div class="flex flex-col gap-1.5">
-					<Label>{{ t("settings.maxConcurrent.label") }}</Label>
-					<NumberField
-						:model-value="form.max_concurrent"
-						:min="0"
-						:max="50"
-						class="w-32"
-						@update:model-value="
-							(v) => v !== undefined && (form.max_concurrent = v)
-						"
-					>
-						<NumberFieldContent>
-							<NumberFieldDecrement />
-							<NumberFieldInput />
-							<NumberFieldIncrement />
-						</NumberFieldContent>
-					</NumberField>
-					<p class="text-xs text-muted-foreground">{{ t("settings.maxConcurrent.hint") }}</p>
-				</div>
-
-				<div class="flex flex-col gap-1.5">
-					<Label>{{ t("settings.pollInterval.label") }}</Label>
-					<NumberField
-						:model-value="form.poll_interval_secs"
-						:min="10"
-						:max="300"
-						class="w-32"
-						@update:model-value="
-							(v) => v !== undefined && (form.poll_interval_secs = v)
-						"
-					>
-						<NumberFieldContent>
-							<NumberFieldDecrement />
-							<NumberFieldInput />
-							<NumberFieldIncrement />
-						</NumberFieldContent>
-					</NumberField>
-				</div>
-
-				<div class="flex flex-col gap-1.5">
-					<Label>{{ t("settings.preferredResolution.label") }}</Label>
-					<Select
-						:model-value="String(form.preferred_resolution)"
-						@update:model-value="form.preferred_resolution = Number($event ?? 0)"
-					>
-						<SelectTrigger class="w-48">
-							<SelectValue />
-						</SelectTrigger>
-						<SelectContent>
-							<SelectItem value="0">{{ t("settings.preferredResolution.original") }}</SelectItem>
-							<SelectItem
-								v-for="resolution in [240, 360, 480, 540, 720, 1080, 1440, 2160]"
-								:key="resolution"
-								:value="String(resolution)"
-							>
-								{{ resolution }}p
-							</SelectItem>
-						</SelectContent>
-					</Select>
-					<p class="text-xs text-muted-foreground">
-						{{ t("settings.preferredResolution.hint") }}
-					</p>
-				</div>
-
-				<div v-if="form.preferred_resolution > 0" class="flex flex-col gap-1.5">
-					<Label>{{ t("settings.resolutionPreference.label") }}</Label>
-					<RadioGroup
-						:model-value="form.resolution_preference"
-						class="flex flex-row gap-4"
-						@update:model-value="
-							(v) => v && (form.resolution_preference = v as 'lower' | 'higher')
-						"
-					>
-						<div v-for="direction in resolutionDirections" :key="direction" class="flex items-center gap-2">
-							<RadioGroupItem :id="`resolution-${direction}`" :value="direction" />
-							<Label :for="`resolution-${direction}`" class="cursor-pointer">
-								{{ t(`settings.resolutionPreference.${direction}`) }}
-							</Label>
-						</div>
-					</RadioGroup>
-					<p class="text-xs text-muted-foreground">
-						{{ t("settings.resolutionPreference.hint") }}
-					</p>
-				</div>
-
-				<div class="flex flex-col gap-1.5">
-					<Label>{{ t("settings.mergeFormat.label") }}</Label>
-					<RadioGroup
-						:model-value="form.merge_format"
-						class="flex flex-row gap-4"
-						@update:model-value="(v) => v && (form.merge_format = v as string)"
-					>
-						<div
-							v-for="fmt in ['mp4', 'mkv', 'ts']"
-							:key="fmt"
-							class="flex items-center gap-2"
-						>
-							<RadioGroupItem :id="`fmt-${fmt}`" :value="fmt" />
-							<Label :for="`fmt-${fmt}`" class="font-mono cursor-pointer">{{
-								fmt
-							}}</Label>
-						</div>
-					</RadioGroup>
-					<p class="text-xs text-muted-foreground">
-						{{ t("settings.mergeFormat.hint") }}
-					</p>
-				</div>
-
-				<div class="flex flex-col gap-1.5">
-					<Label>{{ t("settings.maxTmpDirGb.label") }}</Label>
-					<NumberField
-						:model-value="form.max_tmp_dir_gb"
-						:min="0"
-						:step="0.5"
-						class="w-36"
-						@update:model-value="
-							(v) => v !== undefined && (form.max_tmp_dir_gb = v)
-						"
-					>
-						<NumberFieldContent>
-							<NumberFieldDecrement />
-							<NumberFieldInput />
-							<NumberFieldIncrement />
-						</NumberFieldContent>
-					</NumberField>
-					<p class="text-xs text-muted-foreground">{{ t("settings.maxTmpDirGb.hint") }}</p>
-				</div>
-			</section>
-
-			<section class="flex flex-col gap-3.5">
-				<h2
-					class="text-xs font-bold uppercase tracking-widest text-muted-foreground pb-2 border-b"
-				>
-					{{ t("settings.sections.network") }}
-				</h2>
-				<div class="flex flex-col gap-1.5">
-					<Label>{{ t("settings.apiProxy.label") }}</Label>
-					<Input
-						:model-value="form.api_proxy_url ?? ''"
-						:placeholder="t('settings.apiProxy.placeholder')"
-						autocomplete="url"
-						@update:model-value="
-							form.api_proxy_url = ($event as string) || null
-						"
-						@keyup.enter="saveProxy('api_proxy_url')"
-						@blur="saveProxy('api_proxy_url')"
-					/>
-					<p class="text-xs text-muted-foreground">
-						{{ t("settings.apiProxy.hint") }}
-					</p>
-				</div>
-				<div class="flex flex-col gap-1.5">
-					<Label>{{ t("settings.scMirror.label") }}</Label>
-					<Input
-						:model-value="form.sc_mirror_url ?? ''"
-						:placeholder="t('settings.scMirror.placeholder')"
-						autocomplete="url"
-						@update:model-value="
-							form.sc_mirror_url = ($event as string) || null
-						"
-						@keyup.enter="saveProxy('sc_mirror_url')"
-						@blur="saveProxy('sc_mirror_url')"
-					/>
-					<p class="text-xs text-muted-foreground">
-						{{ t("settings.scMirror.hint") }}
-					</p>
-				</div>
-				<div class="flex flex-col gap-1.5">
-					<Label>{{ t("settings.cdnProxy.label") }}</Label>
-					<Input
-						:model-value="form.cdn_proxy_url ?? ''"
-						:placeholder="t('settings.cdnProxy.placeholder')"
-						autocomplete="url"
-						@update:model-value="
-							form.cdn_proxy_url = ($event as string) || null
-						"
-						@keyup.enter="saveProxy('cdn_proxy_url')"
-						@blur="saveProxy('cdn_proxy_url')"
-					/>
-					<p class="text-xs text-muted-foreground">
-						{{ t("settings.cdnProxy.hint") }}
-					</p>
-				</div>
-			</section>
-
-			<section class="flex flex-col gap-3.5">
-				<h2
-					class="text-xs font-bold uppercase tracking-widest text-muted-foreground pb-2 border-b"
-				>
-					{{ t("settings.sections.mouflonKeys") }}
-				</h2>
-				<p class="text-xs text-muted-foreground leading-relaxed">
-					{{ t("settings.mouflonKeysDesc") }}
-					<code class="bg-muted px-1 py-0.5 rounded text-xs font-mono"
-						>pkey → pdkey</code
-					>
-				</p>
-
-				<!-- 同步配置 / Sync configuration -->
-				<div class="flex flex-col gap-1.5">
-					<Label>{{ t("settings.mouflonSyncUrl.label") }}</Label>
-					<Input
-						:model-value="form.mouflon_sync_url ?? ''"
-						:placeholder="t('settings.mouflonSyncUrl.placeholder')"
-						autocomplete="url"
-						@update:model-value="form.mouflon_sync_url = ($event as string) || null"
-						@keyup.enter="saveProxy('mouflon_sync_url')"
-						@blur="saveProxy('mouflon_sync_url')"
-					/>
-				</div>
-				<div class="flex flex-col gap-1.5">
-					<Label>{{ t("settings.mouflonSyncToken.label") }}</Label>
-					<Input
-						:model-value="form.mouflon_sync_token ?? ''"
-						:placeholder="t('settings.mouflonSyncToken.placeholder')"
-						type="password"
-						autocomplete="current-password"
-						@update:model-value="form.mouflon_sync_token = ($event as string) || null"
-						@keyup.enter="saveProxy('mouflon_sync_token')"
-						@blur="saveProxy('mouflon_sync_token')"
-					/>
-				</div>
-
-				<!-- 同步状态 + 手动同步按钮 / Sync status + manual sync button -->
-				<div class="flex items-center justify-between gap-4 text-xs text-muted-foreground">
-					<div class="flex flex-col gap-0.5">
-						<span>{{ t("settings.mouflonAutoSyncedAt") }}{{ formatTs(mouflonStore.auto_synced_at) }}</span>
-						<span>{{ t("settings.mouflonManualUpdatedAt") }}{{ formatTs(mouflonStore.manual_updated_at) }}</span>
-					</div>
-					<Button
-						type="button"
-						variant="outline"
-						size="sm"
-						:disabled="syncing || !form.mouflon_sync_url"
-						@click="syncKeys"
-					>
-						{{ syncing ? t("settings.mouflonSyncing") : t("settings.mouflonSync") }}
-					</Button>
-				</div>
-
-				<table
-					v-if="Object.keys(mouflonStore.keys).length"
-					class="w-full text-xs border-collapse"
-				>
-					<thead>
-						<tr>
-							<th
-								class="text-left px-2 py-1.5 border-b text-muted-foreground font-semibold"
-							>
-								{{ t("settings.mouflonTable.pkey") }}
-							</th>
-							<th
-								class="text-left px-2 py-1.5 border-b text-muted-foreground font-semibold"
-							>
-								{{ t("settings.mouflonTable.pdkey") }}
-							</th>
-							<th class="border-b"></th>
-						</tr>
-					</thead>
-					<tbody>
-						<tr v-for="(pdkey, pkey) in mouflonStore.keys" :key="pkey">
-							<td class="px-2 py-1.5 border-b font-mono">{{ pkey }}</td>
-							<td class="px-2 py-1.5 border-b font-mono max-w-60 truncate">
-								{{ pdkey }}
-							</td>
-							<td class="px-2 py-1.5 border-b">
-								<Button
-									type="button"
-									variant="destructive"
-									size="sm"
-									class="h-6 text-xs px-2"
-									@click="removeKey(pkey)"
-								>
-									{{ t("common.delete") }}
-								</Button>
-							</td>
-						</tr>
-					</tbody>
-				</table>
-				<p v-else class="text-xs text-muted-foreground">{{ t("settings.noKeys") }}</p>
-
-				<div class="flex gap-2 items-center">
-					<Input
-						v-model="newPkey"
-						placeholder="pkey"
-						autocomplete="off"
-						class="flex-1 font-mono text-xs"
-					/>
-					<Input
-						v-model="newPdkey"
-						placeholder="pdkey"
-						autocomplete="off"
-						class="flex-2 font-mono text-xs"
-					/>
-					<Button type="button" variant="outline" @click="addKey">{{ t("settings.addKey") }}</Button>
-				</div>
-				<p v-if="keyError" class="text-xs text-destructive">{{ keyError }}</p>
-			</section>
-		</form>
-	</div>
+ <div><header class="page-heading"><div><div class="eyebrow">PREFERENCES</div><h1>{{ t('settings.title') }}</h1><p>{{ t('ui.settingsHint') }}</p></div><span class="settings-save" :class="{'text-destructive':!!errorMessage}" role="status"><Loader2 v-if="store.saveStatus==='saving'" class="size-3.5 animate-spin" /><Check v-else-if="!errorMessage" class="size-3.5" />{{ errorMessage ? t('ui.saveFailed') : store.saveStatus==='saving' ? t('ui.saving') : t('ui.saved') }}</span></header>
+ <div v-if="loadError" class="view-error" role="alert">{{ loadError }} <Button variant="outline" size="sm" @click="initialize">{{ t('ui.retry') }}</Button></div>
+ <div v-if="errorMessage" class="view-error" role="alert">{{ errorMessage }} <Button variant="outline" size="sm" @click="persist">{{ t('ui.retry') }}</Button></div>
+ <div v-if="!ready && !loadError" class="empty-state" role="status">{{ t('common.loading') }}</div>
+ <div v-if="ready" class="settings-layout"><nav class="settings-navigation" :aria-label="t('settings.title')"><button v-for="key in panes" :key="key" type="button" :class="{active:pane===key}" :aria-current="pane===key?'page':undefined" @click="pane=key">{{ t(`ui.${key==='recording'?'recordingSettings':key}`) }}</button></nav><div class="settings-content">
+  <section v-if="pane==='general'" class="settings-section"><h2>{{ t('ui.general') }}</h2><SettingsField id="language" :label="t('settings.language.label')"><select id="language" v-model="form.language" @change="changeLocale"><option v-for="item in localesStore.locales" :key="item.code" :value="item.code">{{ item.name }}</option></select></SettingsField><SettingsField :label="t('ui.appearance')"><div class="radio-choices"><button v-for="key in themeOptions" :key="key" type="button" :aria-pressed="appearance===key" :class="{active:appearance===key}" @click="changeAppearance(key)">{{ t(`ui.theme${key}`) }}</button></div></SettingsField></section>
+  <section v-else-if="pane==='recording'" class="settings-section"><h2>{{ t('ui.recordingSettings') }}</h2>
+   <SettingsField id="output-dir" :label="t('settings.outputDir.label')" :hint="t('ui.directoryHint')"><div class="flex gap-2"><input id="output-dir" v-model="form.output_dir" class="min-w-0 flex-1" @blur="saveDirectory" @keydown.enter.prevent="saveDirectory" /><Button variant="outline" :disabled="choosing" @click="chooseDirectory"><FolderOpen class="size-4" />{{ t('ui.chooseFolder') }}</Button></div></SettingsField>
+   <SettingsField :label="t('ui.duration')" :hint="t('settings.recordingDuration.hint')"><div class="radio-choices"><button v-for="seconds in [0,900,1800,3600]" :key="seconds" :class="{active:form.max_recording_duration_secs===seconds&&!customDuration}" :aria-pressed="form.max_recording_duration_secs===seconds&&!customDuration" @click="setDuration(seconds)">{{ seconds ? t('ui.minutes',{n:seconds/60}) : t('ui.unlimited') }}</button><button :class="{active:customShown}" :aria-pressed="customShown" @click="customDuration=true">{{ t('ui.custom') }}</button></div></SettingsField>
+   <SettingsField v-if="customShown" id="duration-seconds" :label="t('settings.recordingDuration.label')"><input id="duration-seconds" v-model.number="form.max_recording_duration_secs" type="number" min="0" step="1" /></SettingsField>
+   <div class="filename-example"><small>{{ t('ui.namePreview') }}</small><code>username_YYYYMMDD_HHMMSS_part01.mp4<br>username_YYYYMMDD_HHMMSS_part02.mp4</code></div>
+   <div class="settings-row"><SettingsField id="quality" :label="t('settings.preferredResolution.label')"><select id="quality" v-model.number="form.preferred_resolution"><option v-for="value in qualities" :key="value" :value="value">{{ value ? `${value}p` : t('ui.highestQuality') }}</option></select></SettingsField><SettingsField id="merge-format" :label="t('settings.mergeFormat.label')"><select id="merge-format" v-model="form.merge_format"><option v-for="value in ['mp4','mkv','ts']" :key="value" :value="value">{{ value.toUpperCase() }}</option></select></SettingsField></div>
+   <SettingsField :label="t('ui.qualityFallback')" :hint="t('ui.qualityFallbackHint')"><div class="radio-choices"><button v-for="direction in ['lower','higher'] as const" :key="direction" :class="{active:form.resolution_preference===direction}" :aria-pressed="form.resolution_preference===direction" @click="form.resolution_preference=direction">{{ t(direction==='lower'?'ui.lowerQuality':'ui.higherQuality') }}</button></div></SettingsField>
+   <div class="settings-row"><SettingsField id="max-concurrent" :label="t('settings.maxConcurrent.label')" :hint="t('settings.maxConcurrent.hint')"><input id="max-concurrent" v-model.number="form.max_concurrent" type="number" min="0" step="1" /></SettingsField><SettingsField id="poll-interval" :label="t('settings.pollInterval.label')"><input id="poll-interval" v-model.number="form.poll_interval_secs" type="number" min="1" step="1" /></SettingsField></div>
+   <SettingsField id="temp-limit" :label="t('settings.maxTmpDirGb.label')" :hint="t('settings.maxTmpDirGb.hint')"><input id="temp-limit" v-model.number="form.max_tmp_dir_gb" type="number" min="0" step="1" /></SettingsField>
+   <div class="settings-switch-row"><div><label for="global-auto">{{ t('ui.globalAuto') }}</label><p>{{ t('ui.globalAutoHint') }}</p></div><Switch id="global-auto" v-model="form.auto_record" /></div><div class="settings-hint">{{ t('ui.previewIndependent') }}</div>
+  </section>
+  <section v-else-if="pane==='network'" class="settings-section"><h2>{{ t('ui.network') }}</h2><SettingsField id="api-proxy" :label="t('ui.apiProxy')" :hint="t('ui.apiProxyHint')"><input id="api-proxy" v-model="form.api_proxy_url" placeholder="socks5://127.0.0.1:10808" @blur="persist" @keydown.enter.prevent="persist" /></SettingsField><SettingsField id="cdn-proxy" :label="t('ui.cdnProxy')" :hint="t('ui.cdnProxyHint')"><input id="cdn-proxy" v-model="form.cdn_proxy_url" placeholder="socks5://127.0.0.1:10808" @blur="persist" @keydown.enter.prevent="persist" /></SettingsField><SettingsField id="sc-mirror" :label="t('settings.scMirror.label')" :hint="t('settings.scMirror.hint')"><input id="sc-mirror" v-model="form.sc_mirror_url" placeholder="stripchat.example.com" @blur="persist" @keydown.enter.prevent="persist" /></SettingsField></section>
+  <section v-else class="settings-section"><h2>{{ t('ui.platforms') }}</h2><div class="platform-summary"><span class="platform-mark">S</span><strong>Stripchat</strong><span class="subtle-tag ml-auto">{{ t('ui.keysConfigured',{count:keys.length}) }}</span></div><p class="text-xs text-muted-foreground leading-relaxed">{{ t('ui.keyHint') }}</p>
+   <SettingsField id="sync-url" :label="t('settings.mouflonSyncUrl.label')"><input id="sync-url" v-model="form.mouflon_sync_url" placeholder="https://mouflon.chantrail.com" @blur="persist" @keydown.enter.prevent="persist" /></SettingsField><SettingsField id="sync-token" :label="t('settings.mouflonSyncToken.label')"><input id="sync-token" v-model="form.mouflon_sync_token" type="password" autocomplete="off" :placeholder="t('settings.mouflonSyncToken.placeholder')" @blur="persist" @keydown.enter.prevent="persist" /></SettingsField>
+   <div class="flex items-center justify-between gap-3"><div class="text-xs text-muted-foreground space-y-1"><p>{{ t('settings.mouflonAutoSyncedAt') }}{{ date(keyStore.auto_synced_at) }}</p><p>{{ t('settings.mouflonManualUpdatedAt') }}{{ date(keyStore.manual_updated_at) }}</p></div><Button variant="outline" :disabled="keyBusy || !form.mouflon_sync_url" @click="syncKeys"><RefreshCw class="size-4" :class="{'animate-spin':keyBusy}" />{{ t(keyBusy?'settings.mouflonSyncing':'settings.mouflonSync') }}</Button></div><p v-if="syncMessage" class="text-xs text-[var(--live)]" role="status">{{ syncMessage }}</p>
+   <p class="text-xs text-muted-foreground pt-3">{{ t('ui.keysHidden') }}</p><div v-for="([pkey,pdkey],index) in keys" :key="pkey" class="key-configuration-row"><span class="key-number">{{ index+1 }}</span><div class="key-values"><code>{{ visibleKeys.has(pkey) ? pkey : '•••• •••• ••••' }}</code><code>{{ visibleKeys.has(pkey) ? pdkey : '•••• •••• ••••' }}</code></div><Button variant="ghost" size="icon" :aria-label="`${t(visibleKeys.has(pkey)?'ui.hideKey':'ui.revealKey')} ${index+1}`" @click="reveal(pkey)"><EyeOff v-if="visibleKeys.has(pkey)" class="size-4" /><Eye v-else class="size-4" /></Button><Button variant="ghost" size="sm" class="text-destructive" :disabled="keyBusy" @click="removeKey(pkey)">{{ t('common.delete') }}</Button></div><p v-if="!keys.length" class="text-xs text-muted-foreground">{{ t('settings.noKeys') }}</p>
+   <div class="settings-row"><SettingsField id="new-pkey" label="pkey"><input id="new-pkey" v-model="newPkey" autocomplete="off" /></SettingsField><SettingsField id="new-pdkey" label="pdkey"><input id="new-pdkey" v-model="newPdkey" type="password" autocomplete="off" /></SettingsField></div><Button variant="outline" :disabled="keyBusy" @click="addKey"><Plus class="size-4" />{{ t('settings.addKey') }}</Button><p v-if="keyError" class="text-xs text-destructive" role="alert">{{ keyError }}</p><div class="platform-summary mt-5"><span class="platform-mark cb">C</span><div><strong>Chaturbate</strong><p class="text-xs text-muted-foreground mt-1">{{ t('ui.chaturbateConfig') }}</p></div></div>
+  </section>
+ </div></div></div>
 </template>
