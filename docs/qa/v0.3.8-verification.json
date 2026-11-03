@@ -1,0 +1,48 @@
+{
+  "version": "0.3.8",
+  "code_commit": "1076a49b2088d0f10303f613a7cb71476cf2267d",
+  "artifact": "STR-Recorder-0.3.8-arm64.dmg",
+  "sha256": "e9bd3b62473304ee46d7ca10d0bd9b02e6f4d385cd34aa31f03b9b1c1e781f2a",
+  "tests": {
+    "frontend": 8,
+    "backend_unit": 17,
+    "live_preview_integration": 3,
+    "recording_integration": 2,
+    "pp_utils": 1,
+    "contact_sheet": 1
+  },
+  "runtime": "isolated native Tauri window with production views and commands; synthetic media",
+  "live_sites": "Name search returned results; no fresh real CDN or face-upload claim",
+  "checks": {
+    "bundle_version": true,
+    "architecture": "arm64",
+    "adhoc_signature": true,
+    "approved_icon_sha256": "23d3b86ee3fe642d6afec3672cdd56dd40d3cf2e12ef257b52c18f3cccb47e54",
+    "ffmpeg": "ffmpeg version 8.0.1 Copyright (c) 2000-2025 the FFmpeg developers",
+    "ffprobe": "ffprobe version 8.0.1 Copyright (c) 2007-2025 the FFmpeg developers",
+    "modules": [
+      "contact_sheet_v031",
+      "filter_short_v030",
+      "notify_discord_v031",
+      "notify_telegram_v031"
+    ],
+    "contact_sheet_version": "Contact Sheet 0.3.2",
+    "qa_harness_excluded": true,
+    "license_resources": true
+  },
+  "limits": [
+    "Apple Silicon, macOS 26+",
+    "Ad-hoc signed, not Developer ID notarized",
+    "Installed production application and user recordings were not replaced",
+    "Missing drawtext filter produces an image without timestamp overlay"
+  ],
+  "ci_code_run": "https://github.com/Mia336699/STR-Recorder/actions/runs/41660202763",
+  "native_final": {
+    "default_contact_sheet_png": true,
+    "image_drawer_transition": true,
+    "exit_after_completed_postprocess": true,
+    "settings_failed_draft_navigation_retry": true,
+    "add_validation_and_auto_opt_in": true
+  },
+  "ci_code_conclusion": "success"
+}
