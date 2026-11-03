@@ -123,6 +123,7 @@ pub fn run() {
             commands::verify_streamer,
             // Settings
             commands::get_settings,
+            commands::choose_recording_directory,
             commands::save_settings_cmd,
             commands::get_disk_space,
             // Mouflon Keys
@@ -135,6 +136,9 @@ pub fn run() {
             commands::get_merging_dirs,
             commands::delete_recording,
             commands::open_recording,
+            commands::authorize_recording_media,
+            commands::inspect_recording,
+            commands::reveal_recording,
             commands::open_output_dir,
             commands::read_output_file,
             commands::get_module_outputs,

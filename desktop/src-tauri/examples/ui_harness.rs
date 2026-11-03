@@ -46,7 +46,7 @@ fn main(){
  let root=std::env::temp_dir().join(format!("str-native-ui-qa-{}",std::process::id()));
  stripchat_recorder_lib::core::runtime::initialize(root.join("data"),bundle.join("Resources/bin")).unwrap();
  let rt=Arc::new(tokio::runtime::Runtime::new().unwrap());
- let (source,server)=rt.block_on(fixture::fixture(&root.join("media")));
+ let (source,server)=rt.block_on(fixture::fixture_seconds(&root.join("media"),1200));
  seed(&root);
  let app_state=AppState::new().unwrap();
  for name in ["qa_one","chaturbate~qa_two","qa_three","chaturbate~qa_four","qa_offline","chaturbate~qa_offline","qa_private","qa_offline_long_name_123456789"] {app_state.add_streamer_with_auto_record(name,Some(false)).unwrap();}
@@ -75,6 +75,7 @@ fn main(){
             qa_verify_streamer,
             // Settings
             commands::get_settings,
+            commands::choose_recording_directory,
             commands::save_settings_cmd,
             commands::get_disk_space,
             // Mouflon Keys
@@ -87,6 +88,9 @@ fn main(){
             commands::get_merging_dirs,
             commands::delete_recording,
             commands::open_recording,
+            commands::authorize_recording_media,
+            commands::inspect_recording,
+            commands::reveal_recording,
             commands::open_output_dir,
             commands::read_output_file,
             commands::get_module_outputs,

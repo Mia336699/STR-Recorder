@@ -18,6 +18,10 @@ pub struct RecordingFile {
     pub path: String,
     pub size_bytes: u64,
     pub started_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_started_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub part_index: Option<u8>,
     pub is_recording: bool,
     pub record_duration_secs: Option<u64>,
     pub video_duration_secs: Option<u64>,
@@ -126,6 +130,8 @@ fn collect_from_meta(
                     path: video_path.to_string_lossy().to_string(),
                     size_bytes: effective_size,
                     started_at: meta.started_at,
+                    group_started_at: meta.group_started_at,
+                    part_index: meta.part_index,
                     is_recording: false,
                     record_duration_secs: None,
                     video_duration_secs: meta.video_duration_secs,
@@ -150,6 +156,8 @@ fn collect_from_meta(
                         path: video_path.to_string_lossy().to_string(),
                         size_bytes,
                         started_at: local.to_rfc3339(),
+                        group_started_at: meta.group_started_at,
+                        part_index: meta.part_index,
                         is_recording: true,
                         record_duration_secs: Some(elapsed),
                         video_duration_secs: None,
@@ -163,6 +171,8 @@ fn collect_from_meta(
                         path: video_path.to_string_lossy().to_string(),
                         size_bytes: meta.size_bytes,
                         started_at: meta.started_at,
+                    group_started_at: meta.group_started_at,
+                    part_index: meta.part_index,
                         is_recording: false,
                         record_duration_secs: None,
                         video_duration_secs: None,
@@ -254,4 +264,44 @@ pub fn delete_recording_inner(
 /// Parse the recording start time from a filename stem (format: `{name}_{YYYYMMDD}_{HHmmss}`).
 pub fn parse_timestamp_from_stem_pub(stem: &str) -> Option<String> {
     crate::recording::meta::parse_timestamp_from_stem(stem)
+}
+
+/// Validate one completed recording before granting WebKit access. No directory wildcard scope.
+pub fn completed_recording_path(output: &std::path::Path, requested: &std::path::Path) -> Result<PathBuf> {
+    let root = output.canonicalize()?;
+    let path = requested.canonicalize()?;
+    if !path.starts_with(&root) || !path.is_file() {
+        return Err(crate::core::error::AppError::Other("Access denied".into()));
+    }
+    let extension = path.extension().and_then(|s| s.to_str()).unwrap_or("").to_ascii_lowercase();
+    if !matches!(extension.as_str(), "mp4" | "mkv" | "ts") {
+        return Err(crate::core::error::AppError::Other("Not a recording video".into()));
+    }
+    let meta = crate::recording::meta::read_meta(&path).ok_or_else(|| crate::core::error::AppError::Other("Recording metadata missing".into()))?;
+    if meta.status == "recording" || meta.status.starts_with("merging") {
+        return Err(crate::core::error::AppError::Other("Recording is not finalized".into()));
+    }
+    Ok(path)
+}
+
+#[cfg(test)]
+mod playback_tests {
+    use super::*;
+    #[test]
+    fn only_finalized_metadata_backed_videos_within_output_are_authorized() {
+        let root=std::env::temp_dir().join(format!("str-playback-path-{}",rand::random::<u64>()));
+        let output=root.join("output"); std::fs::create_dir_all(&output).unwrap();
+        let path=output.join("a_b_20261102_233000_part01.mp4"); std::fs::write(&path,b"fixture").unwrap();
+        assert!(completed_recording_path(&output,&path).is_err());
+        crate::recording::meta::ensure_meta(&path,"2026-11-02T23:30:00+08:00");
+        assert!(completed_recording_path(&output,&path).is_err());
+        crate::recording::meta::set_status(&path,"finish");
+        assert_eq!(completed_recording_path(&output,&path).unwrap(),path.canonicalize().unwrap());
+        let outside=root.join("outside.mp4");std::fs::copy(&path,&outside).unwrap();
+        crate::recording::meta::ensure_meta(&outside,"2026-11-02T23:30:00+08:00");crate::recording::meta::set_status(&outside,"finish");
+        assert!(completed_recording_path(&output,&outside).is_err());
+        #[cfg(unix)] {let link=output.join("escape.mp4");std::os::unix::fs::symlink(&outside,&link).unwrap();assert!(completed_recording_path(&output,&link).is_err());}
+        let image=output.join("image.png");std::fs::write(&image,b"fixture").unwrap();assert!(completed_recording_path(&output,&image).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

@@ -16,7 +16,7 @@ tauri-build = { version = "2", features = [] }
 # 引用 backend 库 crate / Reference the backend library crate
 stripchat-recorder-lib = { path = "../../backend", package = "stripchat-recorder" }
 
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-single-instance = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-dialog = "2"

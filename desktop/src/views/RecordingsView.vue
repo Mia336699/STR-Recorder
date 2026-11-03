@@ -26,11 +26,16 @@
 	import { usePostprocessStore } from "@/stores/postprocess";
 	import { useRecordings } from "@/composables/useRecordings";
 	import { usePostprocess, makePpProgress } from "@/composables/usePostprocess";
+	import type { RecordingFile } from "@/types/recordings";
+	import { recordingName, type RecordingGroup } from "@/lib/recordingGroups";
+	import RecordingPlayer from "@/components/RecordingPlayer.vue";
+	import RecordingDetails from "@/components/RecordingDetails.vue";
+	import ActionMenu from "@/components/ActionMenu.vue";
 	import { useImagePreview } from "@/composables/useImagePreview";
 	import { Button } from "@/components/ui/button";
 	import { Badge } from "@/components/ui/badge";
 	import { Checkbox } from "@/components/ui/checkbox";
-	import { Loader2, Image } from "@lucide/vue";
+	import { Loader2, Image, Search, Play, FolderOpen, ChevronDown, ChevronRight } from "@lucide/vue";
 	import { Progress } from "@/components/ui/progress";
 	import {
 		Dialog,
@@ -50,7 +55,7 @@
 	import { useI18n } from "vue-i18n";
 
 	const { toast, confirm } = useNotify();
-	const { t } = useI18n();
+	const { t, locale } = useI18n();
 	const ppStore = usePostprocessStore();
 	/** 事件取消订阅函数列表 / Event unsubscribe function list */
 	const unlisteners: (() => void)[] = [];
@@ -178,8 +183,9 @@
 	 * Open a recording file with the system default application.
 	 */
 	async function openFile(path: string) {
-		await call("open_recording", { path });
-	}
+        const file=files.value.find(f=>f.path===path);
+        if(file && canPlay(file)) playbackFiles.value=[file];
+    }
 
 	/**
 	 * 打开模块输出文件（使用预览弹窗）。
@@ -210,7 +216,7 @@
 	}) {
 		const ok = await confirm({
 			title: t("recordings.delete.title"),
-			message: t("recordings.delete.message", { name: f.name }),
+			message: `${t("recordings.delete.message", { name: f.name })}\n${t("ui.deleteRelated")}`,
 			confirmText: t("recordings.delete.confirm"),
 			danger: true,
 		});
@@ -242,7 +248,7 @@
 		const count = paths.length;
 		const ok = await confirm({
 			title: t("recordings.delete.batchTitle"),
-			message: t("recordings.delete.batchMessage", { count }),
+			message: `${t("recordings.delete.batchMessage", { count })}\n${paths.map(p=>p.split(/[\\/]/).pop()).slice(0,12).join("\n")}\n${t("ui.deleteRelated")}`,
 			confirmText: t("recordings.delete.confirm"),
 			danger: true,
 		});
@@ -620,23 +626,53 @@
 		unlisteners.forEach((fn) => fn());
 	});
 
-	/** 顶部 header 元素引用，用于动态计算表头 sticky 偏移 */
-	const headerEl = ref<HTMLElement | null>(null);
-	const headerHeight = ref(0);
-	let headerRo: ResizeObserver | null = null;
-	watchEffect(() => {
-		headerRo?.disconnect();
-		if (!headerEl.value) return;
-		headerRo = new ResizeObserver((entries) => {
-			headerHeight.value = entries[0].borderBoxSize[0].blockSize;
-		});
-		headerRo.observe(headerEl.value);
-	});
-	onUnmounted(() => headerRo?.disconnect());
+    const query=ref("");
+    const fileFilter=ref("all");
+    const playbackFiles=ref<RecordingFile[]>([]);
+    const detailPath=ref<string|null>(null);
+    const detailFile=computed(()=>files.value.find(f=>f.path===detailPath.value));
+    const detailGroup=computed(()=>groups.value.find(g=>g.files.some(f=>f.path===detailPath.value)));
+    function canPlay(f:RecordingFile){return !f.is_recording && !f.status?.startsWith('merging');}
+    function canProcess(f:RecordingFile){return canPlay(f) && ppStatus.value[f.path] !== 'running' && ppStatus.value[f.path] !== 'waiting';}
+    function processing(f:RecordingFile){return ['pp_waiting','pp_running'].includes(f.status || '') || ['waiting','running'].includes(ppStatus.value[f.path] || '');}
+    const processingCount=computed(()=>files.value.filter(processing).length);
+    const visibleGroups=computed(()=>groups.value.map(group=>{
+        const list=group.files.filter(f=> (fileFilter.value === 'all' || fileFilter.value === 'recording' && f.is_recording || fileFilter.value === 'processing' && processing(f)) && `${group.platform} ${group.username} ${f.name}`.toLowerCase().includes(query.value.trim().toLowerCase()));
+        return {...group,files:list,totalSize:list.reduce((sum,f)=>sum+f.size_bytes,0),hasRecording:list.some(f=>f.is_recording)};
+    }).filter(g=>g.files.length));
+    function playGroup(group:RecordingGroup){playbackFiles.value=group.files.filter(canPlay);}
+    function playSelected(){playbackFiles.value=groups.value.flatMap(g=>g.files).filter(f=>selected.value.has(f.path)&&canPlay(f));}
+    function date(value:string,timeOnly=false){const d=new Date(value);return Number.isFinite(d.getTime()) ? new Intl.DateTimeFormat(locale.value,timeOnly ? {hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false} : {year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(d) : t('ui.noData');}
+    function status(f:RecordingFile){
+        if(f.is_recording)return {label:t('recordings.status.recording'),tone:'recording'};
+        if(f.status==='merging_waiting')return {label:t('recordings.status.waitingMerge'),tone:'warning'};
+        if(f.status==='merging') {const p=mergeProgress.value[f.path];return {label:t('recordings.status.merging')+(p?.total_bytes ? ` ${Math.min(100,Math.round(p.out_bytes/p.total_bytes*100))}%` : ''),tone:'warning'};}
+        const state=ppStatus.value[f.path];
+        if(state==='running'||state==='waiting'||f.status==='pp_waiting'||f.status==='pp_running')return {label:ppProgress.value[f.path]?.overallLabel || t('ui.processing'),tone:'warning'};
+        if(state==='error'||f.status==='pp_error')return {label:t('recordings.status.failed'),tone:'error'};
+        if(f.status==='finish'||state==='done')return {label:t('recordings.status.done'),tone:'done'};
+        return {label:t('ui.noData'),tone:'muted'};
+    }
+    function fileActions(f:RecordingFile){return [
+        {key:'details',label:t('ui.details')},
+        ...(moduleOutputs.value[f.path]?.contact_sheet ? [{key:'preview',label:t('ui.previewImage')}] : []),
+        {key:'process',label:t('recordings.actions.postprocess'),disabled:!canProcess(f)},
+        {key:'external',label:t('ui.external'),disabled:!canPlay(f)},
+        {key:'reveal',label:t('ui.reveal'),disabled:!canPlay(f)},
+        {key:'delete',label:t('recordings.actions.delete'),danger:true,disabled:!canPlay(f)},
+    ];}
+    async function fileAction(key:string,f:RecordingFile){
+        if(key==='details')detailPath.value=f.path;
+        else if(key==='preview')void openModuleOutput(f.path,'contact_sheet');
+        else if(key==='process')void runPostprocess(f.path);
+        else if(key==='delete')void deleteFile(f);
+        else try {await call(key==='reveal'?'reveal_recording':'open_recording',{path:f.path});}catch(e){toast(String(e),'error');}
+    }
+    async function openDirectory(){try{await call('open_output_dir');}catch(e){toast(String(e),'error');}}
 </script>
 
 <template>
-	<div class="flex flex-col">
+ <div>
 		<Dialog :open="previewOpen" @update:open="previewOpen = $event">
 			<DialogContent
 				class="p-0 overflow-hidden flex flex-col w-fit"
@@ -694,467 +730,23 @@
 				</div>
 			</DialogContent>
 		</Dialog>
-
-		<header
-			ref="headerEl"
-			class="flex items-start justify-between gap-4 shrink-0 pb-4 bg-background sticky top-0 z-20"
-		>
-			<div class="flex-1 min-w-0">
-				<h1 class="text-xl font-bold mb-0.5">{{ t("recordings.title") }}</h1>
-				<div
-					class="flex items-center gap-3 text-sm text-muted-foreground flex-wrap"
-				>
-					<span>{{
-						t("recordings.subtitle.total", { count: files.length })
-					}}</span>
-					<span v-if="recordingCount > 0" class="text-destructive">{{
-						t("recordings.subtitle.recording", { count: recordingCount })
-					}}</span>
-					<span v-if="selectedCount > 0" class="text-foreground">{{
-						t("recordings.subtitle.selected", { count: selectedCount })
-					}}</span>
-					<span v-if="totalRecordingSpeed > 0">
-						{{ t("recordings.subtitle.totalSpeed") }}
-						<span class="text-foreground tabular-nums"
-							>{{ formatSize(totalRecordingSpeed) }}/s</span
-						>
-					</span>
-				</div>
-				<div v-if="diskSpace" class="mt-2 flex items-center gap-2 max-w-xs">
-					<Progress
-						:model-value="diskUsedPct"
-						class="h-1.5 flex-1"
-						:class="
-							diskSpace.available_bytes < 5 * 1024 ** 3
-								? '[&>div]:bg-destructive'
-								: ''
-						"
-					/>
-					<span
-						class="text-xs text-muted-foreground whitespace-nowrap tabular-nums"
-						:class="
-							diskSpace.available_bytes < 5 * 1024 ** 3
-								? 'text-destructive'
-								: ''
-						"
-					>
-						{{ formatSize(diskSpace.used_bytes) }} /
-						{{ formatSize(diskSpace.total_bytes) }}
-					</span>
-				</div>
-			</div>
-			<div class="flex gap-2 shrink-0">
-				<Button
-					v-if="selectedCount > 0"
-					variant="outline"
-					size="sm"
-					:disabled="ppSelectableCount === 0"
-					@click="postProcessSelected"
-				>
-					{{ t("recordings.batchPostprocess", { count: ppSelectableCount }) }}
-				</Button>
-				<Button
-					v-if="selectedCount > 0"
-					variant="destructive"
-					size="sm"
-					@click="deleteSelected"
-				>
-					{{ t("recordings.deleteSelected", { count: selectedCount }) }}
-				</Button>
-			</div>
-		</header>
-
-		<div class="pb-6">
-			<div
-				v-if="loading && files.length === 0"
-				class="text-center text-muted-foreground py-16"
-			>
-				{{ t("recordings.loading") }}
-			</div>
-			<div
-				v-else-if="files.length === 0"
-				class="text-center text-muted-foreground py-16"
-			>
-				{{ t("recordings.empty") }}
-			</div>
-
-			<Table v-else>
-				<TableHeader
-					class="sticky z-10 bg-background"
-					:style="{ top: `${headerHeight}px` }"
-				>
-					<TableRow>
-						<TableHead class="w-8">
-							<Checkbox
-								:model-value="getAllChecked()"
-								@update:model-value="setAllChecked"
-							/>
-						</TableHead>
-						<TableHead class="w-px whitespace-nowrap">{{
-							t("recordings.table.filename")
-						}}</TableHead>
-						<TableHead
-							class="cursor-pointer select-none whitespace-nowrap"
-							@click="toggleSort('size_bytes')"
-						>
-							{{ t("recordings.table.size") }}
-							<component
-								:is="sortIcon('size_bytes')"
-								class="inline size-3.5 ml-0.5"
-							/>
-						</TableHead>
-						<TableHead
-							class="cursor-pointer select-none whitespace-nowrap"
-							@click="toggleSort('started_at')"
-						>
-							{{ t("recordings.table.startTime") }}
-							<component
-								:is="sortIcon('started_at')"
-								class="inline size-3.5 ml-0.5"
-							/>
-						</TableHead>
-						<TableHead>{{ t("recordings.table.recordDuration") }}</TableHead>
-						<TableHead
-							class="cursor-pointer select-none whitespace-nowrap"
-							@click="toggleSort('video_duration_secs')"
-						>
-							{{ t("recordings.table.videoDuration") }}
-							<component
-								:is="sortIcon('video_duration_secs')"
-								class="inline size-3.5 ml-0.5"
-							/>
-						</TableHead>
-						<TableHead>{{ t("recordings.table.speed") }}</TableHead>
-						<TableHead>{{ t("recordings.table.segments") }}</TableHead>
-						<TableHead class="min-w-45">{{
-							t("recordings.table.postprocess")
-						}}</TableHead>
-						<TableHead>{{ t("recordings.table.actions") }}</TableHead>
-					</TableRow>
-				</TableHeader>
-				<TableBody>
-					<template v-for="group in groups" :key="group.username">
-						<TableRow
-							class="bg-muted/40 hover:bg-muted/60 cursor-pointer"
-							@click="toggleGroup(group.username)"
-						>
-							<TableCell class="w-8" @click.stop>
-								<Checkbox
-									:model-value="getGroupChecked(group)"
-									@update:model-value="setGroupChecked(group)"
-								/>
-							</TableCell>
-							<TableCell colspan="8" class="font-semibold">
-								<span class="mr-2 text-muted-foreground text-xs">{{
-									collapsedGroups.has(group.username) ? "▶" : "▼"
-								}}</span>
-								{{ group.username }}
-								<Badge
-									v-if="group.hasRecording"
-									variant="destructive"
-									class="ml-2 text-[10px]"
-									>{{ t("recordings.status.recording") }}</Badge
-								>
-								<span class="ml-2 text-xs text-muted-foreground font-normal">
-									{{
-										t("recordings.group.fileCount", {
-											count: group.files.length,
-										})
-									}}
-									·
-									{{ formatSize(group.totalSize) }}
-								</span>
-							</TableCell>
-							<TableCell />
-						</TableRow>
-
-						<template v-if="!collapsedGroups.has(group.username)">
-							<TableRow v-for="f in group.files" :key="f.path" class="relative">
-								<template v-if="f.status === 'merging_waiting' || f.status === 'merging'">
-									<TableCell class="w-8">
-										<Checkbox :model-value="false" :disabled="true" />
-									</TableCell>
-									<TableCell class="font-medium w-px whitespace-nowrap pl-7">
-										<div class="flex items-center gap-1.5">
-											<span>{{ f.name }}</span>
-											<Badge variant="outline" class="text-[10px] shrink-0">{{
-												f.status === 'merging_waiting'
-													? t("recordings.status.waitingMerge")
-													: t("recordings.status.merging")
-											}}</Badge>
-										</div>
-									</TableCell>
-									<td colspan="8" class="p-2 align-middle w-full">
-										<div class="flex items-center gap-3 h-9 w-full">
-											<Loader2
-												class="size-4 animate-spin shrink-0 text-muted-foreground"
-											/>
-											<span class="text-xs text-muted-foreground shrink-0">{{
-												f.status === 'merging_waiting'
-													? t("recordings.status.waitingMergeVideo")
-													: t("recordings.status.mergingVideo")
-											}}</span>
-											<template v-if="f.status === 'merging' && mergeProgress[f.path]">
-												<div
-													class="flex-1 bg-muted rounded-full h-1.5 overflow-hidden"
-												>
-													<div
-														class="h-full bg-primary rounded-full transition-all duration-500"
-														:style="{
-															width: `${mergeProgress[f.path].total_bytes > 0
-																? Math.min(99, Math.floor(mergeProgress[f.path].out_bytes / mergeProgress[f.path].total_bytes * 10000) / 100)
-																: 0}%`,
-														}"
-													/>
-												</div>
-												<span class="tabular-nums text-xs text-muted-foreground w-14 shrink-0">{{
-													mergeProgress[f.path].total_bytes > 0
-														? (Math.min(99, Math.floor(mergeProgress[f.path].out_bytes / mergeProgress[f.path].total_bytes * 10000) / 100)).toFixed(2)
-														: '0.00'
-												}}%</span>
-											</template>
-										</div>
-									</td>
-								</template>
-
-								<template v-else>
-									<TableCell class="w-8">
-										<Checkbox
-											:model-value="getFileChecked(f.path)"
-											:disabled="f.is_recording"
-											@update:model-value="setFileChecked(f.path)"
-										/>
-									</TableCell>
-									<TableCell class="font-medium w-px whitespace-nowrap pl-7">
-										{{ f.name }}
-										<Badge
-											v-if="f.is_recording"
-											variant="destructive"
-											class="ml-1.5 text-[10px]"
-											>{{ t("recordings.status.recording") }}</Badge
-										>
-									</TableCell>
-									<TableCell class="tabular-nums">{{
-										formatSize(f.size_bytes)
-									}}</TableCell>
-									<TableCell class="tabular-nums text-muted-foreground">{{
-										new Date(f.started_at).toLocaleString()
-									}}</TableCell>
-									<TableCell class="tabular-nums">
-										<span v-if="f.is_recording" class="text-destructive">{{
-											formatDuration(elapsed[f.path] ?? 0)
-										}}</span>
-										<span v-else class="text-muted-foreground">—</span>
-									</TableCell>
-									<TableCell class="tabular-nums">
-										<span v-if="f.video_duration_secs != null">{{
-											formatDuration(f.video_duration_secs)
-										}}</span>
-										<span v-else class="text-muted-foreground">—</span>
-									</TableCell>
-									<TableCell class="tabular-nums">
-										<span
-											v-if="f.is_recording && recordingSpeed[f.path] != null"
-											class="text-xs"
-										>
-											{{ formatSize(recordingSpeed[f.path]) }}/s
-										</span>
-										<span v-else class="text-muted-foreground">—</span>
-									</TableCell>
-									<TableCell class="min-w-36">
-										<template v-if="f.is_recording && segmentStats[f.path] != null">
-											<div class="flex items-center gap-1 flex-wrap">
-												<Badge variant="secondary" class="tabular-nums text-[11px] px-1.5 py-0">
-													{{ segmentStats[f.path].downloaded }}
-												</Badge>
-												<Badge
-													v-if="segmentStats[f.path].failed > 0"
-													variant="secondary"
-													class="tabular-nums text-[11px] px-1.5 py-0 bg-destructive/15 text-destructive border-0"
-												>
-													{{ segmentStats[f.path].failed }}
-												</Badge>
-												<Badge
-													variant="outline"
-													class="tabular-nums text-[11px] px-1.5 py-0"
-													:class="segmentStats[f.path].failed === 0
-														? 'border-green-500 text-green-500'
-														: 'border-destructive text-destructive'"
-												>
-													{{
-														segmentStats[f.path].downloaded + segmentStats[f.path].failed > 0
-															? Math.round(segmentStats[f.path].downloaded / (segmentStats[f.path].downloaded + segmentStats[f.path].failed) * 100)
-															: 100
-													}}%
-												</Badge>
-											</div>
-										</template>
-										<span v-else class="text-muted-foreground">—</span>
-									</TableCell>
-									<TableCell class="min-w-45">
-										<div v-if="!f.is_recording">
-											<div
-												v-if="
-													ppStatus[f.path] === 'running' && ppProgress[f.path]
-												"
-												class="flex flex-col gap-1.5"
-											>
-												<div
-													class="flex items-center justify-between text-xs text-muted-foreground"
-												>
-													<span>{{
-														ppProgress[f.path].moduleExecLabel
-															? t(
-																	"recordings.status.overallProgressWithLabel",
-																	{ label: ppProgress[f.path].moduleExecLabel },
-																)
-															: t("recordings.status.overallProgress")
-													}}</span>
-													<span class="tabular-nums shrink-0">{{
-														ppProgress[f.path].overallLabel
-													}}</span>
-												</div>
-												<Progress
-													:model-value="ppProgress[f.path].overallPct"
-													:animated="false"
-													class="h-1.5"
-												/>
-												<div
-													class="flex items-center justify-between text-xs text-muted-foreground"
-												>
-													<span class="truncate max-w-50">{{
-														ppProgress[f.path].moduleName === "processing"
-															? t("usePostprocess.processing")
-															: ppProgress[f.path].moduleName
-													}}</span>
-													<span class="tabular-nums shrink-0">{{
-														ppProgress[f.path].moduleLabel === "waiting"
-															? t("usePostprocess.waitingProgress")
-															: ppProgress[f.path].moduleLabel
-													}}</span>
-												</div>
-												<Progress
-													:model-value="ppProgress[f.path].modulePct"
-													:animated="false"
-													class="h-1.5"
-												/>
-											</div>
-											<div
-												v-else-if="ppStatus[f.path] === 'waiting'"
-												class="flex items-center gap-1.5 text-xs text-muted-foreground"
-											>
-												<Loader2 class="size-3 animate-spin shrink-0" />
-												<span>{{ t("recordings.status.waiting") }}</span>
-											</div>
-											<div
-												v-else-if="ppStatus[f.path] === 'done' || ppStatus[f.path] === 'error'"
-												class="flex flex-col gap-0.5"
-											>
-												<template v-if="ppProgress[f.path]?.moduleResults?.length">
-													<div
-														v-for="r in ppProgress[f.path].moduleResults"
-														:key="r.moduleId"
-														class="flex items-center gap-1.5 text-xs"
-														:class="r.success ? 'text-green-500' : 'text-destructive'"
-														:title="r.success ? r.moduleId : `${r.moduleId}: ${r.message}`"
-													>
-														<span class="shrink-0">{{ r.success ? "✓" : "✗" }}</span>
-														<span class="truncate max-w-40">{{ r.moduleId }}</span>
-													</div>
-												</template>
-												<template v-else>
-													<div
-														v-if="ppStatus[f.path] === 'done'"
-														class="text-lg text-green-500"
-													>
-														{{ t("recordings.status.done") }}
-													</div>
-													<div v-else class="text-lg text-destructive">
-														{{ t("recordings.status.failed") }}
-													</div>
-												</template>
-											</div>
-											<span v-else class="text-xs text-muted-foreground"
-												>—</span
-											>
-										</div>
-										<span v-else class="text-xs text-muted-foreground">—</span>
-									</TableCell>
-									<TableCell>
-										<div class="flex gap-1.5">
-											<Button
-												size="sm"
-												variant="outline"
-												:disabled="f.is_recording"
-												:title="
-													f.is_recording
-														? t('recordings.actions.playDisabled')
-														: ''
-												"
-												@click="openFile(f.path)"
-												>{{ t("recordings.actions.play") }}</Button
-											>
-											<Button
-												v-if="moduleOutputs[f.path]?.['contact_sheet']"
-												size="sm"
-												variant="outline"
-												title="查看 Contact Sheet 预览图"
-												@click="openModuleOutput(f.path, 'contact_sheet')"
-											>
-												<Image class="size-3.5" />
-											</Button>
-											<Button
-												size="sm"
-												variant="outline"
-												:disabled="
-													f.is_recording ||
-													ppStatus[f.path] === 'running' ||
-													ppStatus[f.path] === 'waiting'
-												"
-												:title="
-													f.is_recording ? t('recordings.status.recording') : ''
-												"
-												@click="runPostprocess(f.path)"
-											>
-												<Loader2
-													v-if="ppStatus[f.path] === 'running'"
-													class="size-3.5 animate-spin"
-												/>
-												<span v-else>{{
-													t("recordings.actions.postprocess")
-												}}</span>
-											</Button>
-											<Button
-												size="sm"
-												variant="destructive"
-												:disabled="f.is_recording"
-												:title="
-													f.is_recording
-														? t('recordings.actions.deleteDisabled')
-														: ''
-												"
-												@click="deleteFile(f)"
-												>{{ t("recordings.actions.delete") }}</Button
-											>
-										</div>
-									</TableCell>
-								</template>
-							</TableRow>
-						</template>
-					</template>
-				</TableBody>
-			</Table>
-		</div>
-	</div>
+  <header class="page-heading"><div><div class="eyebrow">RECORDING LIBRARY</div><h1>{{ t('recordings.title') }}</h1><p>{{ t('recordings.subtitle.total',{count:files.length}) }} · {{ t('ui.groups',{count:groups.length}) }}<span v-if="totalRecordingSpeed > 0"> · {{ formatSize(totalRecordingSpeed) }}/s</span></p></div><Button variant="outline" @click="openDirectory"><FolderOpen class="size-4" />{{ t('ui.openFolder') }}</Button></header>
+  <div v-if="diskSpace && diskSpace.available_bytes < 5 * 1024 ** 3" class="detail-warning mb-4" role="status">{{ t('ui.available',{size:formatSize(diskSpace.available_bytes)}) }}</div>
+  <div class="view-toolbar"><div class="filter-tabs" role="tablist" :aria-label="t('recordings.title')"><button v-for="key in ['all','recording','processing']" :key="key" type="button" role="tab" :aria-selected="fileFilter===key" class="filter-tab" :class="{active:fileFilter===key}" @click="fileFilter=key">{{ t(`ui.${key}`) }}<small v-if="key==='recording'">{{ recordingCount }}</small><small v-if="key==='processing'">{{ processingCount }}</small></button></div><label class="toolbar-search"><Search class="size-4" /><input v-model="query" type="search" :placeholder="t('ui.filesSearch')" :aria-label="t('ui.filesSearch')" /></label><span class="subtle-tag">{{ t('ui.fileOrder') }}</span></div>
+  <div v-if="selectedCount" class="file-selection"><span>{{ t('recordings.subtitle.selected',{count:selectedCount}) }}</span><Button variant="ghost" size="sm" @click="selected.clear()">{{ t('ui.clearSelection') }}</Button><span class="flex-1" /><Button variant="outline" size="sm" @click="playSelected"><Play class="size-4" />{{ t('ui.playSelected') }}</Button><Button variant="outline" size="sm" :disabled="!ppSelectableCount" @click="postProcessSelected">{{ t('recordings.actions.postprocess') }}</Button><Button variant="destructive" size="sm" @click="deleteSelected">{{ t('recordings.actions.delete') }}</Button></div>
+  <div v-if="loading && !files.length" class="empty-state" role="status"><Loader2 class="animate-spin" />{{ t('recordings.loading') }}</div>
+  <div v-else-if="!files.length" class="empty-state"><FolderOpen /><h2>{{ t('recordings.empty') }}</h2></div>
+  <template v-else>
+   <section v-for="group in visibleGroups" :key="group.key" class="recording-group">
+    <header class="recording-group-head"><Checkbox :aria-label="`${t('ui.selectGroup')} ${group.username}`" :model-value="getGroupChecked(group)" :disabled="!group.files.some(canPlay)" @update:model-value="setGroupChecked(group)" /><button class="collapse-control" :aria-expanded="!collapsedGroups.has(group.key)" :aria-label="`${t('ui.toggleGroup')} ${group.username}`" @click="toggleGroup(group.key)"><ChevronRight v-if="collapsedGroups.has(group.key)" class="size-4" /><ChevronDown v-else class="size-4" /></button><div class="recording-group-title"><strong>{{ group.username }} <span class="platform-mark" :class="{cb:group.platform==='Chaturbate'}">{{ group.platform[0] }}</span><span v-if="group.hasRecording" class="recording-pill">● {{ t('ui.recording') }}</span></strong><small>{{ t('ui.groupStarted',{time:date(group.started_at)}) }}</small></div><span class="recording-group-size">{{ t('ui.groupSize',{count:group.files.length,size:formatSize(group.totalSize)}) }}</span><Button variant="outline" size="sm" :disabled="!group.files.some(canPlay)" @click="playGroup(group)"><Play class="size-4" />{{ t('ui.sequential') }}</Button></header>
+    <table v-if="!collapsedGroups.has(group.key)" class="files-table"><colgroup><col style="width:32px" /><col /><col style="width:84px" /><col style="width:64px" /><col style="width:72px" /><col style="width:100px" /><col style="width:80px" /></colgroup><thead><tr><th /><th>{{ t('recordings.table.filename') }}</th><th>{{ t('ui.actualStart') }}</th><th>{{ t('ui.durationShort') }}</th><th>{{ t('recordings.table.size') }}</th><th>{{ t('ui.fileState') }}</th><th>{{ t('recordings.table.actions') }}</th></tr></thead><tbody>
+     <tr v-for="f in group.files" :key="f.path"><td><Checkbox :aria-label="`${t('ui.selectFile')} ${f.name}`" :model-value="getFileChecked(f.path)" :disabled="!canPlay(f)" @update:model-value="setFileChecked(f.path)" /></td><td><button class="file-name-button" :title="f.name" @click="detailPath=f.path"><span class="media-file-icon">{{ f.name.split('.').pop()?.toUpperCase() }}</span><span><strong>{{ f.name }}</strong><small v-if="recordingName(f).part != null">{{ t('ui.part',{n:String(recordingName(f).part).padStart(2,'0')}) }}</small><small v-else>{{ group.platform }}</small></span></button></td><td :title="date(f.started_at)">{{ date(f.started_at,true) }}<small v-if="new Date(f.started_at).toDateString() !== new Date(group.started_at).toDateString()" class="block text-[10px] text-muted-foreground">{{ new Date(f.started_at).toLocaleDateString(locale) }}</small></td><td>{{ f.is_recording ? formatDuration(elapsed[f.path] ?? f.record_duration_secs ?? 0) : f.video_duration_secs != null ? formatDuration(f.video_duration_secs) : '—' }}</td><td>{{ formatSize(f.size_bytes) }}</td><td><span class="file-status" :class="`tone-${status(f).tone}`">{{ status(f).label }}</span></td><td><div class="file-row-actions"><button type="button" :disabled="!canPlay(f)" :aria-label="`${t('recordings.actions.play')} ${f.name}`" :title="t('recordings.actions.play')" @click="openFile(f.path)"><Play class="size-3.5" /></button><ActionMenu :label="`${f.name} · ${t('ui.more')}`" :items="fileActions(f)" @select="fileAction($event,f)" /></div></td></tr>
+    </tbody></table>
+   </section>
+   <div v-if="!visibleGroups.length" class="empty-state"><Search /><h2>{{ t('ui.noFilesMatch') }}</h2><Button variant="outline" @click="query='';fileFilter='all'">{{ t('ui.clearFilters') }}</Button></div>
+   <footer class="page-note"><span>{{ t('ui.fileOrder') }}</span><span>{{ t('ui.detailsHint') }}</span></footer>
+  </template>
+  <RecordingDetails v-if="detailFile && detailGroup" :file="detailFile" :group="detailGroup" :stats="segmentStats[detailFile.path]" :speed="recordingSpeed[detailFile.path]" :outputs="moduleOutputs[detailFile.path]" :processing="status(detailFile).label" @close="detailPath=null" @play="playbackFiles=[$event];detailPath=null" @preview="openModuleOutput(detailFile.path,'contact_sheet')" />
+  <RecordingPlayer v-if="playbackFiles.length" :files="playbackFiles" @close="playbackFiles=[]" />
+ </div>
 </template>
-
-<style scoped>
-	.fade-enter-active,
-	.fade-leave-active {
-		transition: opacity 0.15s;
-	}
-	.fade-enter-from,
-	.fade-leave-to {
-		opacity: 0;
-	}
-</style>

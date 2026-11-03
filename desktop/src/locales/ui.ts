@@ -1,4 +1,11 @@
 export const zhUI = {
+ noModuleParameters: '此模块无需额外参数。',
+  appearance: '外观', themesystem: '跟随系统', themedark: '深色', themelight: '浅色', highestQuality: '最高可用画质', qualityFallback: '目标画质不可用时', lowerQuality: '优先较低画质', higherQuality: '优先较高画质', qualityFallbackHint: '若该方向没有可用画质，再使用另一方向最近的画质。', invalidSetting: '请检查数值设置：使用有效的非负整数，检查间隔至少为 1 秒。', absoluteDirectory: '请使用完整的绝对录制目录路径。', invalidNetwork: '代理或同步地址格式不正确，请检查网络与平台配置。', invalidMirror: '镜像站请填写域名，不包含协议或路径。', globalAuto: '允许自动录制', globalAutoHint: '关闭后不再自动启动房间录制，仍可手动开始录制。', previewIndependent: '观看使用独立预览画质，切换观看或静音不会改变录制画质。', apiProxy: 'API 代理', cdnProxy: 'CDN 代理', apiProxyHint: '查询房间状态与直播地址；留空时直接连接。', cdnProxyHint: '下载直播媒体分片；留空时直接连接。', removeKeyHint: '删除这项取流配置？依赖它的公开房间可能暂时无法播放或录制。', chaturbateConfig: '公开房间使用独立站点客户端，无需 Stripchat 取流密钥。',
+
+  streamer: '主播', fileState: '状态',
+  clearSelection: '清除选择', selectGroup: '选择录制组', selectFile: '选择文件', toggleGroup: '展开或折叠录制组', durationShort: '时长', detailsHint: '下载统计与后处理信息收在片段详情中',
+  previewImage: '视频预览图', deleteRelated: '同时清理对应元数据、预览图及后处理关联产物，不影响其他录制组。',
+  mediaVideo: '视频', mediaAudio: '音频', savedSegments: '已保存分片', failedSegments: '失败分片', reveal: '定位文件',
   globalAutoDisabled: '全局自动录制已关闭，可在录制设置中开启。',
   workbench: '直播录制工作台', navigation: '主导航', disk: '录制磁盘', available: '可用 {size}',
   all: '全部', online: '在线', recording: '录制中', watching: '观看中', search: '搜索主播名称',
@@ -9,7 +16,7 @@ export const zhUI = {
   more: '更多操作', auto: '自动录制', roomInfo: '房间信息', platform: '平台', roomState: '房间状态',
   removeHint: '移除后停止追踪与该房间录制，已录制的视频和关联文件会保留。',
   enableAuto: '开启自动录制？', enableAutoHint: '该房间正在公开直播，开启后将立即开始录制。',
-  saving: '保存中…', saved: '已自动保存', saveFailed: '保存失败，修改尚未应用', retry: '重试',
+  saving: '保存中…', saved: '已自动保存', saveFailed: '保存失败，修改尚未保存', retry: '重试',
   chooseFolder: '选择…', chooseFolderTitle: '选择录制目录', openFolder: '打开目录',
   general: '通用', recordingSettings: '录制', network: '网络', platforms: '平台配置',
   directoryHint: '录制与后处理输出保存在此目录。', duration: '自动分段时长', unlimited: '不限时', minutes: '{n} 分钟', custom: '自定义',
@@ -32,6 +39,13 @@ export const zhUI = {
 };
 
 export const enUI: typeof zhUI = {
+ noModuleParameters: 'This module needs no additional settings.',
+  appearance: 'Appearance', themesystem: 'System', themedark: 'Dark', themelight: 'Light', highestQuality: 'Highest available', qualityFallback: 'When the target quality is unavailable', lowerQuality: 'Prefer lower quality', higherQuality: 'Prefer higher quality', qualityFallbackHint: 'If no stream exists in that direction, use the nearest quality in the other direction.', invalidSetting: 'Use valid non-negative integer values. Poll interval must be at least 1 second.', absoluteDirectory: 'Use an absolute recording directory path.', invalidNetwork: 'Invalid proxy or synchronization URL. Check Network and Platforms.', invalidMirror: 'Enter a mirror hostname without a protocol or path.', globalAuto: 'Allow automatic recording', globalAutoHint: 'When disabled, rooms do not start recording automatically. Manual recording remains available.', previewIndependent: 'Watching uses independent preview quality and never changes recording quality.', apiProxy: 'API proxy', cdnProxy: 'CDN proxy', apiProxyHint: 'Room status and stream URL requests. Leave empty for a direct connection.', cdnProxyHint: 'Live media segment downloads. Leave empty for a direct connection.', removeKeyHint: 'Delete this stream configuration? Public rooms depending on it may no longer play or record.', chaturbateConfig: 'Public rooms use a separate site client and do not require Stripchat keys.',
+
+  streamer: 'Streamer', fileState: 'Status',
+  clearSelection: 'Clear selection', selectGroup: 'Select recording group', selectFile: 'Select file', toggleGroup: 'Expand or collapse group', durationShort: 'Duration', detailsHint: 'Download statistics and processing results are in segment details',
+  previewImage: 'Video contact sheet', deleteRelated: 'Associated metadata, previews and processed outputs will also be removed. Other recording groups are unaffected.',
+  mediaVideo: 'Video', mediaAudio: 'Audio', savedSegments: 'Saved segments', failedSegments: 'Failed segments', reveal: 'Reveal file',
   globalAutoDisabled: 'Global auto-record is disabled. Enable it in Recording settings.',
   workbench: 'Live recording workspace', navigation: 'Main navigation', disk: 'Recording disk', available: '{size} available',
   all: 'All', online: 'Online', recording: 'Recording', watching: 'Watching', search: 'Search streamers',
@@ -42,7 +56,7 @@ export const enUI: typeof zhUI = {
   more: 'More actions', auto: 'Auto-record', roomInfo: 'Room information', platform: 'Platform', roomState: 'Room status',
   removeHint: 'Tracking and recording for this room will stop. Existing videos and related files are kept.',
   enableAuto: 'Enable auto-record?', enableAutoHint: 'This public room is live. Recording will start immediately.',
-  saving: 'Saving…', saved: 'Saved automatically', saveFailed: 'Save failed. Changes have not been applied.', retry: 'Retry',
+  saving: 'Saving…', saved: 'Saved automatically', saveFailed: 'Save failed. Changes have not been saved.', retry: 'Retry',
   chooseFolder: 'Choose…', chooseFolderTitle: 'Choose recording directory', openFolder: 'Open directory',
   general: 'General', recordingSettings: 'Recording', network: 'Network', platforms: 'Platforms',
   directoryHint: 'Recordings and processed outputs are saved here.', duration: 'Split recording after', unlimited: 'Unlimited', minutes: '{n} min', custom: 'Custom',

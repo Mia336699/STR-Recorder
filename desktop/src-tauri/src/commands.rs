@@ -613,3 +613,47 @@ pub async fn stop_all_live_previews(state: State<'_, DesktopState>) -> CmdResult
 pub fn get_live_preview_status(preview_id: String, state: State<'_, DesktopState>) -> Option<stripchat_recorder_lib::preview::PreviewStatus> {
     state.previews.as_ref().and_then(|previews| previews.status(&preview_id))
 }
+
+
+#[tauri::command]
+pub async fn authorize_recording_media(path: String, state: State<'_, DesktopState>, app: tauri::AppHandle) -> CmdResult<String> {
+    use tauri::Manager;
+    let output = state.app_state.get_settings().output_dir;
+    let path = recording_cmd::completed_recording_path(std::path::Path::new(&output), std::path::Path::new(&path)).map_err(map_err)?;
+    if state.recorder.is_file_locked(&path) { return Err("File is being finalized".into()); }
+    app.asset_protocol_scope().allow_file(&path).map_err(|e|e.to_string())?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+pub async fn inspect_recording(path: String, state: State<'_, DesktopState>) -> CmdResult<serde_json::Value> {
+    let output = state.app_state.get_settings().output_dir;
+    let path = recording_cmd::completed_recording_path(std::path::Path::new(&output), std::path::Path::new(&path)).map_err(map_err)?;
+    let result = tokio::time::timeout(std::time::Duration::from_secs(8), tokio::process::Command::new(stripchat_recorder_lib::core::runtime::tool("ffprobe"))
+        .args(["-v","error","-show_entries","stream=codec_name,codec_type,width,height","-of","json"]).arg(&path).kill_on_drop(true).output()).await
+        .map_err(|_|"Media inspection timed out".to_string())?.map_err(|e|e.to_string())?;
+    if !result.status.success() { return Err("Unable to inspect this media file".into()); }
+    serde_json::from_slice(&result.stdout).map_err(|e|e.to_string())
+}
+
+
+#[tauri::command]
+pub async fn reveal_recording(path: String, state: State<'_, DesktopState>, app: tauri::AppHandle) -> CmdResult<()> {
+    use tauri_plugin_opener::OpenerExt;
+    let output = state.app_state.get_settings().output_dir;
+    let path = recording_cmd::completed_recording_path(std::path::Path::new(&output), std::path::Path::new(&path)).map_err(map_err)?;
+    app.opener().reveal_item_in_dir(path).map_err(|e|e.to_string())
+}
+
+
+#[tauri::command]
+pub async fn choose_recording_directory(title: String, state: State<'_, DesktopState>, app: tauri::AppHandle) -> CmdResult<Option<String>> {
+    use tauri_plugin_dialog::DialogExt;
+    let directory=state.app_state.get_settings().output_dir;
+    tokio::task::spawn_blocking(move || {
+        let mut chooser=app.dialog().file().set_title(title);
+        if std::path::Path::new(&directory).is_dir() { chooser=chooser.set_directory(directory); }
+        // Calling the native Rust picker avoids automatically granting a directory-wide asset scope.
+        chooser.blocking_pick_folder().map(|path| path.into_path().map(|p|p.to_string_lossy().into_owned()).map_err(|e|e.to_string())).transpose()
+    }).await.map_err(|e|e.to_string())?
+}

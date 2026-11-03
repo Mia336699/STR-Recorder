@@ -1,6 +1,36 @@
 {
-  "productName":"STR UI QA", "identifier":"com.mia.str-recorder.ui-qa",
-  "build":{"frontendDist":"../dist"},
-  "app":{"withGlobalTauri":false,"windows":[{"label":"main","title":"STR UI QA","url":"index.html","width":1280,"height":780,"minWidth":980,"minHeight":600,"visible":true}],"security":{"csp":null}},
-  "bundle":{"active":false,"macOS":{"infoPlist":"Info.plist","minimumSystemVersion":"26.0"}}
+  "productName": "STR UI QA",
+  "identifier": "com.mia.str-recorder.ui-qa",
+  "build": {
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "STR UI QA",
+        "url": "index.html",
+        "width": 1280,
+        "height": 780,
+        "minWidth": 980,
+        "minHeight": 600,
+        "visible": true
+      }
+    ],
+    "security": {
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": []
+      }
+    }
+  },
+  "bundle": {
+    "active": false,
+    "macOS": {
+      "infoPlist": "Info.plist",
+      "minimumSystemVersion": "26.0"
+    }
+  }
 }

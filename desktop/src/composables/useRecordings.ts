@@ -14,6 +14,7 @@
 import { ref, computed } from "vue";
 import { call } from "@/lib/api";
 import type { RecordingFile } from "@/types/recordings";
+import { groupRecordings, recordingName, type RecordingGroup } from "@/lib/recordingGroups";
 import { ArrowUpDown, ArrowUp, ArrowDown } from "@lucide/vue";
 
 /** 支持的排序字段 / Supported sort keys */
@@ -22,14 +23,7 @@ export type SortKey = "started_at" | "size_bytes" | "video_duration_secs";
 export type SortDir = "asc" | "desc";
 
 /** 按主播分组的录制文件组 / Recording file group by streamer */
-export interface Group {
-	username: string;
-	files: RecordingFile[];
-	/** 组内所有文件的总大小（字节）/ Total size of all files in the group (bytes) */
-	totalSize: number;
-	/** 组内是否有正在录制的文件 / Whether any file in the group is currently recording */
-	hasRecording: boolean;
-}
+export type Group = RecordingGroup;
 
 /**
  * 从录制文件名中提取主播用户名。
@@ -39,19 +33,7 @@ export interface Group {
  * Filename format: `{username}_{YYYYMMDD}_{HHmmss}.ext`
  */
 export function usernameFromFile(f: RecordingFile): string {
-	const stem = f.name.replace(/\.[^.]+$/, "");
-	const parts = stem.split("_");
-	const username = parts.slice(0, -2).join("_");
-	// Group legacy rotations by folder.
-	const pathParts = f.path.split(/[\\/]/);
-	const folder = pathParts[pathParts.length - 2];
-	if (
-		folder && username.startsWith(folder + "_part")
-		&& /^\d+$/.test(username.slice(folder.length + 5))
-	) {
-		return folder;
-	}
-	return username;
+    return recordingName(f).username;
 }
 
 /**
@@ -75,6 +57,7 @@ export function useRecordings() {
 
 	/** 计时器句柄：每秒递增录制时长 / Timer handle: increments recording duration every second */
 	let tickTimer: ReturnType<typeof setInterval> | null = null;
+	let groupedInitially = false;
 	/** 计时器句柄：防抖刷新文件列表 / Timer handle: debounced file list refresh */
 	let dirRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -100,40 +83,15 @@ export function useRecordings() {
 	 * Groups directly by username extracted from filename, no merging state filtering needed.
 	 */
 	const groups = computed<Group[]>(() => {
-		const map = new Map<string, RecordingFile[]>();
-
-		for (const f of files.value) {
-			const u = usernameFromFile(f);
-			if (!map.has(u)) map.set(u, []);
-			map.get(u)!.push(f);
-		}
-
-		const result: Group[] = [];
-		for (const [username, list] of map) {
-			const sorted = [...list].sort((a, b) => {
-				let av: number, bv: number;
-				if (sortKey.value === "started_at") {
-					av = new Date(a.started_at).getTime();
-					bv = new Date(b.started_at).getTime();
-				} else if (sortKey.value === "size_bytes") {
-					av = a.size_bytes;
-					bv = b.size_bytes;
-				} else {
-					av = a.video_duration_secs ?? 0;
-					bv = b.video_duration_secs ?? 0;
-				}
-				return sortDir.value === "desc" ? bv - av : av - bv;
-			});
-			result.push({
-				username,
-				files: sorted,
-				totalSize: list.reduce((s, f) => s + f.size_bytes, 0),
-				hasRecording: list.some((f) => f.is_recording),
-			});
-		}
-		result.sort((a, b) => a.username.localeCompare(b.username));
-		return result;
-	});
+        const result = groupRecordings(files.value);
+        if (sortKey.value !== "started_at") {
+            result.sort((a,b) => {
+                const value = (g: Group) => sortKey.value === "size_bytes" ? g.totalSize : g.files.reduce((sum,f) => sum + (f.video_duration_secs || 0),0);
+                return sortDir.value === "desc" ? value(b)-value(a) : value(a)-value(b);
+            });
+        } else if (sortDir.value === "asc") result.reverse();
+        return result;
+    });
 
 	const allSelectableFiles = computed(() =>
 		files.value.filter(
@@ -210,6 +168,7 @@ export function useRecordings() {
 		loading.value = true;
 		try {
 			files.value = await call<RecordingFile[]>("list_recordings");
+			if (!groupedInitially && files.value.length) { groupedInitially = true; collapsedGroups.value = new Set(groups.value.slice(1).filter(g => !g.hasRecording).map(g=>g.key)); }
 			rebuildElapsed();
 			const paths = new Set(files.value.map((f) => f.path));
 			for (const p of selected.value) {

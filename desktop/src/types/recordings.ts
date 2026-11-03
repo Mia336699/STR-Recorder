@@ -42,6 +42,8 @@ export interface RecordingFile {
 	size_bytes: number;
 	/** 录制开始时间（ISO 字符串）/ Recording start time (ISO string) */
 	started_at: string;
+	group_started_at?: string | null;
+	part_index?: number | null;
 	/** 是否正在录制 / Whether currently recording */
 	is_recording: boolean;
 	/** 已录制时长（秒），录制中时实时更新 / Recorded duration (seconds), updated in real-time while recording */
