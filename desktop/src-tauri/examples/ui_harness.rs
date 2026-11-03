@@ -1,5 +1,6 @@
 //! Full native UI acceptance app. Uses disposable synthetic media and real production views/commands.
 #[path="../src/state.rs"] mod state;
+#[path="../src/shutdown_ui.rs"] mod shutdown_ui;
 #[path="../src/emitter.rs"] mod emitter;
 #[allow(dead_code)] #[path="../src/commands.rs"] mod commands;
 #[path="../../../backend/tests/support/preview_fixture.rs"] mod fixture;
@@ -45,20 +46,23 @@ fn main(){
  let exe=std::env::current_exe().unwrap();let bundle=exe.parent().unwrap().parent().unwrap();
  let root=std::env::temp_dir().join(format!("str-native-ui-qa-{}",std::process::id()));
  stripchat_recorder_lib::core::runtime::initialize(root.join("data"),bundle.join("Resources/bin")).unwrap();
+ stripchat_recorder_lib::core::logging::init_logging(&root.join("logs")).unwrap();
  let rt=Arc::new(tokio::runtime::Runtime::new().unwrap());
  let (source,server)=rt.block_on(fixture::fixture_seconds(&root.join("media"),1200));
  seed(&root);
  let app_state=AppState::new().unwrap();
  for name in ["qa_one","chaturbate~qa_two","qa_three","chaturbate~qa_four","qa_offline","chaturbate~qa_offline","qa_private","qa_offline_long_name_123456789"] {app_state.add_streamer_with_auto_record(name,Some(false)).unwrap();}
- {let mut d=app_state.data.write();d.settings.output_dir=root.join("recordings").to_string_lossy().into();d.settings.setup_done=true;d.settings.max_recording_duration_secs=8;d.settings.auto_record=true;d.pipeline.nodes.clear();}
+ {let mut d=app_state.data.write();d.settings.output_dir=root.join("recordings").to_string_lossy().into();d.settings.setup_done=std::env::var("STR_UI_QA_SETUP").as_deref()!=Ok("1");d.settings.max_recording_duration_secs=8;d.settings.auto_record=true;d.pipeline.nodes.clear();}
  let modules=bundle.join("Resources/modules");if modules.exists(){std::fs::create_dir_all(root.join("data/modules")).unwrap();for entry in std::fs::read_dir(modules).unwrap().flatten(){if entry.path().is_file(){std::fs::copy(entry.path(),root.join("data/modules").join(entry.file_name())).unwrap();}}}
  let runtime=rt.clone();
- let app=tauri::Builder::default().plugin(tauri_plugin_dialog::init()).plugin(tauri_plugin_shell::init()).plugin(tauri_plugin_fs::init()).plugin(tauri_plugin_opener::init()).setup(move|app|{
+ let app=tauri::Builder::default().on_window_event(|window,event|{
+ if let tauri::WindowEvent::CloseRequested{api,..}=event{if let Some(state)=window.app_handle().try_state::<state::DesktopState>(){if !state.exit_ready.load(Ordering::SeqCst){api.prevent_close();window.app_handle().exit(1);}}}
+ }).plugin(tauri_plugin_dialog::init()).plugin(tauri_plugin_shell::init()).plugin(tauri_plugin_fs::init()).plugin(tauri_plugin_opener::init()).setup(move|app|{
  let emitter:Arc<dyn Emitter>=Arc::new(emitter::TauriEmitter::new(app.handle().clone()));
  let recorder=RecorderManager::new(app_state.clone());let monitor=StatusMonitor::new(app_state.clone(),recorder.clone());
  let previews=runtime.block_on(PreviewManager::with_resolver(root.join("cache"),emitter.clone(),fixture::resolver(&source))).unwrap();
  app.manage(Source(source));app.manage(state::DesktopState{exit_ready:AtomicBool::new(false),exiting:AtomicBool::new(false),startup_done:Arc::new(AtomicBool::new(true)),app_state,recorder,monitor,emitter,previews:Some(previews)});
- if let Some(w)=app.get_webview_window("main"){w.navigate("tauri://localhost/".parse().unwrap()).unwrap();let _=w.set_title("STR UI QA — isolated synthetic data");let _=w.show();let _=w.set_focus();}
+ if let Some(w)=app.get_webview_window("main"){if std::env::var("STR_UI_QA_NARROW").as_deref()==Ok("1"){w.set_size(tauri::LogicalSize::new(980.0,600.0)).unwrap();}w.navigate("tauri://localhost/".parse().unwrap()).unwrap();let _=w.set_title("STR UI QA — isolated synthetic data");let _=w.show();let _=w.set_focus();}
  Ok(())
  }).invoke_handler(tauri::generate_handler![
             commands::start_live_preview,
@@ -76,6 +80,7 @@ fn main(){
             // Settings
             commands::get_settings,
             commands::choose_recording_directory,
+            commands::get_runtime_tools,
             commands::save_settings_cmd,
             commands::get_disk_space,
             // Mouflon Keys
@@ -110,6 +115,6 @@ fn main(){
             commands::get_startup_warnings,
             commands::remove_missing_pp_results,
         ]).build(tauri::generate_context!("tauri.ui-qa.conf.json")).unwrap();
- app.run(|app,event|{if let tauri::RunEvent::ExitRequested{api,..}=event{let state=app.state::<state::DesktopState>();if state.exit_ready.load(Ordering::SeqCst){return}api.prevent_exit();if state.exiting.swap(true,Ordering::SeqCst){return}let previews=state.previews.clone();let recorder=state.recorder.clone();let app=app.clone();tauri::async_runtime::spawn(async move{if let Some(p)=previews{p.shutdown().await;}recorder.shutdown().await;app.state::<state::DesktopState>().exit_ready.store(true,Ordering::SeqCst);app.exit(0);});}});
+ app.run(|app,event|{if let tauri::RunEvent::ExitRequested{api,..}=event{let state=app.state::<state::DesktopState>();if state.exit_ready.load(Ordering::SeqCst){return}api.prevent_exit();if state.exiting.swap(true,Ordering::SeqCst){return}let previews=state.previews.clone();let recorder=state.recorder.clone();let app_state=state.app_state.clone();let app=app.clone();tauri::async_runtime::spawn(async move{shutdown_ui::prepare(&app).await;shutdown_ui::phase(&app,"previews");if let Some(p)=previews{p.shutdown().await;}shutdown_ui::phase(&app,"recordings");recorder.shutdown().await;shutdown_ui::phase(&app,"postprocess");while !app_state.pp_tasks.read().is_empty(){tokio::time::sleep(std::time::Duration::from_millis(100)).await;}app.state::<state::DesktopState>().exit_ready.store(true,Ordering::SeqCst);app.exit(0);});}});
  server.abort();
 }

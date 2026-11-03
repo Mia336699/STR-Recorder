@@ -657,3 +657,20 @@ pub async fn choose_recording_directory(title: String, state: State<'_, DesktopS
         chooser.blocking_pick_folder().map(|path| path.into_path().map(|p|p.to_string_lossy().into_owned()).map_err(|e|e.to_string())).transpose()
     }).await.map_err(|e|e.to_string())?
 }
+
+/// Check the bundled executables by running their version command; no network or shell.
+#[tauri::command]
+pub async fn get_runtime_tools() -> CmdResult<Vec<serde_json::Value>> {
+    async fn check(name: &str) -> serde_json::Value {
+        let mut command = tokio::process::Command::new(stripchat_recorder_lib::core::runtime::tool(name));
+        command.arg("-version").kill_on_drop(true);
+        match tokio::time::timeout(std::time::Duration::from_secs(5), command.output()).await {
+            Ok(Ok(output)) if output.status.success() => serde_json::json!({"name":name,"available":true,"version":String::from_utf8_lossy(&output.stdout).lines().next().unwrap_or("")}),
+            Ok(Ok(output)) => serde_json::json!({"name":name,"available":false,"error":format!("Exit status: {}",output.status)}),
+            Ok(Err(error)) => serde_json::json!({"name":name,"available":false,"error":error.to_string()}),
+            Err(_) => serde_json::json!({"name":name,"available":false,"error":"Version check timed out"}),
+        }
+    }
+    let (ffmpeg, ffprobe) = tokio::join!(check("ffmpeg"), check("ffprobe"));
+    Ok(vec![ffmpeg, ffprobe])
+}

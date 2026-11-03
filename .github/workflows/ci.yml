@@ -16,6 +16,8 @@ jobs:
           cache-dependency-path: desktop/package-lock.json
       - run: npm ci --prefix desktop
       - run: npm run build --prefix desktop
+      - name: Desktop UI behavior and locale contracts
+        run: node --experimental-strip-types --test desktop/tests/*.test.ts
       - uses: dtolnay/rust-toolchain@stable
       - name: Install media test tools
         run: sudo apt-get update && sudo apt-get install -y ffmpeg

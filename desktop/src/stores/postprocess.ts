@@ -24,7 +24,10 @@ import { useModuleLocaleStore } from "@/stores/moduleLocale";
  * (e.g. HTTP pages accessed via IP address).
  */
 function generateId(): string {
-	if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+	if (
+		typeof crypto !== "undefined" &&
+		typeof crypto.randomUUID === "function"
+	) {
 		return crypto.randomUUID();
 	}
 	return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
@@ -116,7 +119,8 @@ export const usePostprocessStore = defineStore("postprocess", () => {
 	const saving = ref(false);
 	const saveError = ref("");
 	let saveChain: Promise<void> = Promise.resolve();
-	let revision = 0, pending = 0;
+	let revision = 0,
+		pending = 0;
 	let localReset: ReturnType<typeof setTimeout> | undefined;
 	/** 是否正在本地保存（用于过滤自身触发的 pipeline-updated 事件）/ Whether saving locally (to filter self-triggered pipeline-updated events) */
 	let _isSavingLocally = false;
@@ -142,13 +146,16 @@ export const usePostprocessStore = defineStore("postprocess", () => {
 			const serverTr = moduleLocaleStore.getModuleLocale(mod.id);
 			// 回退到 --describe 中的 i18n 字段 / Fall back to --describe i18n field
 			const describeTr = mod.i18n?.[lang] as
-				| { name?: string; description?: string; params?: Record<string, { label?: string }> }
+				| {
+						name?: string;
+						description?: string;
+						params?: Record<string, { label?: string }>;
+				  }
 				| undefined;
 
 			// 合并：服务器端优先，--describe 作为补充
 			// Merge: server-side takes priority, --describe fills the gaps
-			const name =
-				serverTr?.name ?? describeTr?.name ?? mod.name;
+			const name = serverTr?.name ?? describeTr?.name ?? mod.name;
 			const description =
 				serverTr?.description ?? describeTr?.description ?? mod.description;
 			const params = mod.params.map((p) => ({
@@ -196,7 +203,9 @@ export const usePostprocessStore = defineStore("postprocess", () => {
 			pipeline.value = value;
 			await nextTick();
 			_loaded = true;
-		} finally { loading.value = false; }
+		} finally {
+			loading.value = false;
+		}
 	}
 
 	/**
@@ -204,11 +213,19 @@ export const usePostprocessStore = defineStore("postprocess", () => {
 	 * Save the current pipeline configuration to the backend.
 	 */
 	function savePipeline(): Promise<void> {
-		if (_saveTimer) { clearTimeout(_saveTimer); _saveTimer = null; }
-		const snapshot = JSON.parse(JSON.stringify(pipeline.value)) as PipelineConfig;
+		if (_saveTimer) {
+			clearTimeout(_saveTimer);
+			_saveTimer = null;
+		}
+		const snapshot = JSON.parse(
+			JSON.stringify(pipeline.value),
+		) as PipelineConfig;
 		const current = ++revision;
-		pending++; saving.value = true; _isSavingLocally = true;
-		clearTimeout(localReset); saveError.value = "";
+		pending++;
+		saving.value = true;
+		_isSavingLocally = true;
+		clearTimeout(localReset);
+		saveError.value = "";
 		const task = saveChain.then(async () => {
 			try {
 				await call("save_pipeline", { pipeline: snapshot });
@@ -220,7 +237,9 @@ export const usePostprocessStore = defineStore("postprocess", () => {
 				pending--;
 				if (!pending) {
 					saving.value = false;
-					localReset = setTimeout(() => { _isSavingLocally = false; }, 500);
+					localReset = setTimeout(() => {
+						_isSavingLocally = false;
+					}, 500);
 				}
 			}
 		});
@@ -239,7 +258,10 @@ export const usePostprocessStore = defineStore("postprocess", () => {
 			if (!_loaded) return;
 			saving.value = true;
 			if (_saveTimer) clearTimeout(_saveTimer);
-			_saveTimer = setTimeout(() => { _saveTimer = null; void savePipeline().catch(() => {}); }, 600);
+			_saveTimer = setTimeout(() => {
+				_saveTimer = null;
+				void savePipeline().catch(() => {});
+			}, 600);
 		},
 		{ deep: true },
 	);
@@ -331,6 +353,7 @@ export const usePostprocessStore = defineStore("postprocess", () => {
 		saving,
 		saveError,
 		flushPendingSave,
+		waitForSaves: () => saveChain,
 		fetchModules,
 		fetchPipeline,
 		savePipeline,

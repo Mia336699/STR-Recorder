@@ -18,7 +18,7 @@
 <script setup lang="ts">
 	import { onMounted, onUnmounted, ref, computed } from "vue";
 	import { RouterView, useRouter, useRoute } from "vue-router";
-	import { LayoutGrid, FolderOpen, Workflow, Search, Settings2 } from "@lucide/vue";
+	import { LayoutGrid, FolderOpen, Workflow, Search, Settings2, Loader2 } from "@lucide/vue";
 	import { applyAppearance } from "@/composables/useAppearance";
 	import appIcon from "./assets/str-icon.png";
 	import { formatSize } from "@/utils/format";
@@ -34,6 +34,21 @@
 	import { useModuleLocaleStore } from "@/stores/moduleLocale";
 	import { useLocalesStore } from "@/stores/locales";
 
+	import { emit } from '@tauri-apps/api/event';
+	import { useSettingsStore } from '@/stores/settings';
+	import { usePostprocessStore } from '@/stores/postprocess';
+	import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+	const settingsStore = useSettingsStore(), postprocessStore = usePostprocessStore();
+	const exitPhase = ref('');
+	let unlistenExit: (() => void) | undefined;
+	async function handleExit(phase: unknown) {
+		exitPhase.value = String(phase);
+		if (phase !== 'preparing') return;
+		window.dispatchEvent(new Event('str-before-exit'));
+		postprocessStore.flushPendingSave();
+		await Promise.allSettled([settingsStore.waitForSaves(), postprocessStore.waitForSaves()]);
+		await emit('ui-exit-ready');
+	}
 	const router = useRouter();
 	const route = useRoute();
 	const { toast, confirm } = useNotify();
@@ -130,6 +145,7 @@
 	}
 
 	onMounted(async () => {
+        unlistenExit = await on("app-exiting", handleExit);
 		void refreshDisk();
 		diskTimer = setInterval(refreshDisk, 30000);
 		// 初始化主题并监听系统主题变化 / Initialize theme and listen for system theme changes
@@ -218,6 +234,7 @@
 
 	onUnmounted(() => {
 		clearInterval(diskTimer);
+        unlistenExit?.();
 		// 清理所有事件监听器 / Clean up all event listeners
 		mq.removeEventListener("change", onThemeChange);
 		unlistenFfmpeg?.();
@@ -269,4 +286,5 @@
 		</div>
 
 	</Transition>
+ <Dialog :open="!!exitPhase"><DialogContent class="safe-exit-dialog max-w-md" :show-close-button="false" @escape-key-down.prevent @pointer-down-outside.prevent @interact-outside.prevent><Loader2 class="size-6 animate-spin text-muted-foreground" /><DialogTitle>{{ t('ui.exitTitle') }}</DialogTitle><DialogDescription>{{ t('ui.exitHint') }}</DialogDescription><p role="status" aria-live="polite" class="text-sm">{{ t(`ui.exit${exitPhase}`) }}</p></DialogContent></Dialog>
 </template>

@@ -108,30 +108,51 @@ export const useSettingsStore = defineStore("settings", () => {
 	 *
 	 * @param s - 要保存的设置对象 / Settings object to save
 	 */
-    const saveStatus = ref<'idle'|'saving'|'saved'|'error'>('idle');
-    const saveError = ref<string|null>(null);
-    let revision=0, pending=0;
-    let saveChain:Promise<void>=Promise.resolve();
-    let clearLocalTimer:ReturnType<typeof setTimeout>|undefined;
-    async function saveSettings(s: Settings) {
-        const snapshot={...s};const current=++revision;
-        pending++;clearTimeout(clearLocalTimer);isSavingLocally.value=true;saved.value=false;saveStatus.value='saving';saveError.value=null;
-        const task=saveChain.catch(()=>{}).then(async()=>{
-            try {
-                await call('save_settings_cmd',{newSettings:snapshot});
-                settings.value=snapshot;
-                if(current===revision){saved.value=true;saveStatus.value='saved';}
-            } catch(error) {
-                if(current===revision){saveStatus.value='error';saveError.value=String(error);}
-                throw error;
-            } finally {
-                pending--;
-                if(!pending)clearLocalTimer=setTimeout(()=>{isSavingLocally.value=false;},500);
-            }
-        });
-        saveChain=task.catch(()=>{});
-        return task;
-    }
+	const saveStatus = ref<"idle" | "saving" | "saved" | "error">("idle");
+	const saveError = ref<string | null>(null);
+	const failedDraft = ref<Settings | null>(null);
+	let revision = 0,
+		pending = 0;
+	let saveChain: Promise<void> = Promise.resolve();
+	let clearLocalTimer: ReturnType<typeof setTimeout> | undefined;
+	async function saveSettings(s: Settings) {
+		const snapshot = { ...s };
+		const current = ++revision;
+		pending++;
+		clearTimeout(clearLocalTimer);
+		isSavingLocally.value = true;
+		saved.value = false;
+		saveStatus.value = "saving";
+		saveError.value = null;
+		const task = saveChain
+			.catch(() => {})
+			.then(async () => {
+				try {
+					await call("save_settings_cmd", { newSettings: snapshot });
+					settings.value = snapshot;
+					if (current === revision) {
+						saved.value = true;
+						saveStatus.value = "saved";
+						failedDraft.value = null;
+					}
+				} catch (error) {
+					if (current === revision) {
+						saveStatus.value = "error";
+						saveError.value = String(error);
+						failedDraft.value = snapshot;
+					}
+					throw error;
+				} finally {
+					pending--;
+					if (!pending)
+						clearLocalTimer = setTimeout(() => {
+							isSavingLocally.value = false;
+						}, 500);
+				}
+			});
+		saveChain = task.catch(() => {});
+		return task;
+	}
 
 	/**
 	 * 初始化设置更新事件监听器（只执行一次）。
@@ -151,11 +172,13 @@ export const useSettingsStore = defineStore("settings", () => {
 		settings,
 		loading,
 		saved,
-        saveStatus,
-        saveError,
+		saveStatus,
+		saveError,
 		isSavingLocally,
 		fetchSettings,
 		saveSettings,
+		failedDraft,
+		waitForSaves: () => saveChain,
 		initListeners,
 	};
 });

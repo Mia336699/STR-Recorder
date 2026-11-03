@@ -7,6 +7,7 @@
 //! registers Tauri commands, and starts background tasks
 //! (status monitoring, Mouflon sync, file watching, etc.).
 
+mod shutdown_ui;
 mod commands;
 mod emitter;
 mod state;
@@ -124,6 +125,7 @@ pub fn run() {
             // Settings
             commands::get_settings,
             commands::choose_recording_directory,
+            commands::get_runtime_tools,
             commands::save_settings_cmd,
             commands::get_disk_space,
             // Mouflon Keys
@@ -175,11 +177,15 @@ pub fn run() {
                 let previews = state.previews.clone();
                 let app = app.clone();
                 rt_for_exit.spawn(async move {
+                    shutdown_ui::prepare(&app).await;
+                    shutdown_ui::phase(&app, "previews");
                     if let Some(previews) = previews { previews.shutdown().await; }
+                    shutdown_ui::phase(&app, "recordings");
                     recorder.shutdown().await;
                     while !startup_done.load(Ordering::SeqCst) {
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     }
+                    shutdown_ui::phase(&app, "postprocess");
                     while !app_state.pp_tasks.read().is_empty() {
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     }
