@@ -12,7 +12,7 @@ if [ "${STR_REUSE_MODULES:-0}" = "1" ]; then
 else
   node -e 'require("./scripts/common.js").buildModules("release", "desktop/src-tauri/resources/modules")'
 fi
-export CARGO_TARGET_DIR="$PWD/build_tmp/desktop/target"
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/build_tmp/desktop/target}"
 (cd desktop && npm run tauri -- build --bundles app)
 mkdir -p build/desktop-macos
 APP="$CARGO_TARGET_DIR/release/bundle/macos/STR Recorder.app"
@@ -24,7 +24,8 @@ if [ -d "$STAGE/STR Recorder.app" ]; then rm -rf "$STAGE/STR Recorder.app"; fi
 ditto "$APP" "$STAGE/STR Recorder.app"
 ln -sfn /Applications "$STAGE/Applications"
 cp docs/MACOS.md "$STAGE/安装说明.txt"
-DMG="$PWD/build/desktop-macos/STR-Recorder-0.3.7-arm64.dmg"
+VERSION="$(node -p 'require("./desktop/src-tauri/tauri.conf.json").version')"
+DMG="$PWD/build/desktop-macos/STR-Recorder-$VERSION-arm64.dmg"
 hdiutil create -volname 'STR Recorder' -srcfolder "$STAGE" -ov -format UDZO "$DMG"
 hdiutil verify "$DMG"
 (cd "$(dirname "$DMG")" && shasum -a 256 "$(basename "$DMG")") > "$DMG.sha256"

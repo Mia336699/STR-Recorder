@@ -6,7 +6,7 @@
 
 ## 安装
 
-在本仓库 Releases 下载 `STR-Recorder-0.3.7-arm64.dmg`，将 STR Recorder 拖到 Applications 后启动。
+在本仓库 Releases 下载 `STR-Recorder-0.3.8-arm64.dmg`，将 STR Recorder 拖到 Applications 后启动。
 
 - Apple Silicon，macOS 26 或以上；暂不支持 Intel Mac。
 - 随包提供 FFmpeg、ffprobe 和四个后处理模块，运行时不需要 Node.js、Rust、Homebrew 或网页服务。
@@ -14,6 +14,10 @@
 - 当前构建使用本地 ad-hoc 签名，尚未进行 Apple Developer ID 签名和公证。
 
 ## 功能
+
+- 深色桌面工作台，支持浅色和系统主题。主播搜索、状态筛选、在线优先、紧凑布局，录制文件按组整理。
+- 内置录制组 / 所选片段顺序播放，媒体详情、实际开始时间和后处理结果独立查看。
+- 设置按通用、录制、网络和平台分区，支持 macOS 目录选择；密钥默认遮蔽，修改失败可重试。
 
 - 点击已添加的在线公开主播画面，在卡片内观看直播，再次点击关闭；可同时观看多个房间。默认静音，打开一路声音时其他房间自动静音。切换页面自动关闭观看，录制继续运行。
 
@@ -41,6 +45,8 @@ scripts/package-macos.sh
 安装包输出到 `build/desktop-macos/`。构建脚本将 FFmpeg 和依赖库放入应用资源，重写动态库路径并进行本地签名。用户配置与日志位于 `~/Library/Application Support/com.mia.str-recorder/`，更新应用不会覆盖用户数据。
 
 ## 验证
+
+0.3.8 本地通过 8 项前端检查、22 项后端及后处理测试；已在独立原生窗口验证四路合成预览、关闭观看继续录制、顺序播放、保存失败重试、首次启动、980×600 布局及退出合并。新增验收范围与限制见[UI 验收记录](docs/qa/v0.3.8-ui-progress.md)。本轮名称查找访问成功；图片匹配只验证发送前取消，未发送测试图片。真实直播 CDN 的 0.3.7 记录属于历史结果，不据此声称本轮两站点实时验收通过。
 
 0.3.7 通过 21 项本地测试，并在实际 Tauri 窗口验证四路同时预览、单路声音、快速开关和切页清理；关闭预览后模拟录制仍继续。真实 Chaturbate 公开直播在原生窗口持续播放超过一分钟，H.264/AAC 分段完整解码通过。Stripchat 后续对照测试确认隔离测试缺少现有取流密钥；加载相同配置后，两个公开房间取片及完整解码通过，原生窗口持续播放超过一分钟。详见[Stripchat 补测记录](docs/qa/v0.3.7-stripchat-followup.json)。详见[验收记录](docs/qa/v0.3.7-verification.json)。
 
