@@ -73,6 +73,7 @@ export const useStreamersStore = defineStore("streamers", () => {
 	 * Fetch the streamer list from the backend.
 	 */
 	async function fetchStreamers() {
+		error.value = null;
 		loading.value = true;
 		try {
 			streamers.value = await call<StreamerEntry[]>("list_streamers");

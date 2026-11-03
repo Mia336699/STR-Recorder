@@ -16,8 +16,11 @@
     - Listening for startup-warnings to handle non-existent streamers and orphaned post-processing records
 -->
 <script setup lang="ts">
-	import { onMounted, onUnmounted, ref } from "vue";
+	import { onMounted, onUnmounted, ref, computed } from "vue";
 	import { RouterView, useRouter, useRoute } from "vue-router";
+	import { LayoutGrid, FolderOpen, Workflow, Search, Settings2 } from "@lucide/vue";
+	import appIcon from "./assets/str-icon.png";
+	import { formatSize } from "@/utils/format";
 	import NotifyLayer from "./components/NotifyLayer.vue";
 	import { Button } from "@/components/ui/button";
 	import { call, on, onSseReconnect, onSseDisconnect } from "@/lib/api";
@@ -43,12 +46,17 @@
 
 	/** 侧边栏导航项配置（桌面版无流转发）/ Sidebar navigation items (desktop: no relay) */
 	const navItems = [
-		{ to: "/", labelKey: "nav.streamers" },
-		{ to: "/recordings", labelKey: "nav.recordings" },
-		{ to: "/postprocess", labelKey: "nav.postprocess" },
-		{ to: "/finder", labelKey: "nav.finder" },
-		{ to: "/settings", labelKey: "nav.settings" },
+		{ to: "/", labelKey: "nav.streamers", icon: LayoutGrid },
+		{ to: "/recordings", labelKey: "nav.recordings", icon: FolderOpen },
+		{ to: "/postprocess", labelKey: "nav.postprocess", icon: Workflow },
+		{ to: "/finder", labelKey: "nav.finder", icon: Search },
+		{ to: "/settings", labelKey: "nav.settings", icon: Settings2 },
 	];
+
+	const disk = ref<{total_bytes:number; available_bytes:number; used_bytes:number} | null>(null);
+	const usedPercent = computed(() => disk.value?.total_bytes ? disk.value.used_bytes / disk.value.total_bytes * 100 : 0);
+	let diskTimer: ReturnType<typeof setInterval> | undefined;
+	async function refreshDisk() { try { disk.value = await call("get_disk_space"); } catch { disk.value = null; } }
 
 	/**
 	 * 根据参数切换文档根元素的 dark 类，实现深色/浅色主题切换。
@@ -121,6 +129,8 @@
 	}
 
 	onMounted(async () => {
+		void refreshDisk();
+		diskTimer = setInterval(refreshDisk, 30000);
 		// 初始化主题并监听系统主题变化 / Initialize theme and listen for system theme changes
 		applyTheme(mq.matches);
 		mq.addEventListener("change", onThemeChange);
@@ -206,6 +216,7 @@
 	});
 
 	onUnmounted(() => {
+		clearInterval(diskTimer);
 		// 清理所有事件监听器 / Clean up all event listeners
 		mq.removeEventListener("change", onThemeChange);
 		unlistenFfmpeg?.();
@@ -232,36 +243,20 @@
 
 		<!-- 正常布局：侧边栏 + 内容区 / Normal layout: sidebar + content -->
 		<div v-else key="main" class="flex h-screen overflow-hidden">
-			<aside
-				class="w-44 shrink-0 bg-sidebar border-r border-sidebar-border flex flex-col p-3 gap-1"
-			>
-				<div
-					class="flex items-center gap-2 px-1 py-4 mb-1 border-b border-sidebar-border"
-				>
-					<span class="w-2.5 h-2.5 rounded-full bg-destructive shrink-0" />
-					<span class="text-sm font-bold text-sidebar-foreground"
-						>STR Recorder</span
-					>
-				</div>
-				<nav class="flex flex-col gap-0.5">
-					<Button
-						v-for="item in navItems"
-						:key="item.to"
-						variant="ghost"
-						class="w-full justify-start text-sm font-normal"
-						:class="
-							route.path === item.to
-								? 'bg-sidebar-accent text-sidebar-accent-foreground font-semibold'
-								: 'text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/50'
-						"
-						@click="router.push(item.to)"
-					>
-						{{ t(item.labelKey) }}
-					</Button>
-				</nav>
-			</aside>
-			<main class="flex-1 overflow-hidden">
-				<div ref="mainScrollEl" class="h-full overflow-y-scroll p-6 scrollbar-overlay">
+			<aside class="app-sidebar">
+                <div class="app-brand"><img :src="appIcon" alt="STR Recorder" /><div><strong>STR Recorder</strong><small>{{ t('ui.workbench') }}</small></div></div>
+                <nav :aria-label="t('ui.navigation')">
+                    <Button v-for="item in navItems.filter(i => i.to !== '/settings')" :key="item.to" variant="ghost" class="app-nav" :class="{active: route.path === item.to}" :aria-current="route.path === item.to ? 'page' : undefined" @click="router.push(item.to)">
+                        <component :is="item.icon" class="size-4" /><span>{{ t(item.labelKey) }}</span><small v-if="item.to === '/' && streamersStore.streamers.length">{{ streamersStore.streamers.length }}</small>
+                    </Button>
+                </nav>
+                <div class="sidebar-bottom">
+                    <Button variant="ghost" class="app-nav" :class="{active: route.path === '/settings'}" @click="router.push('/settings')"><Settings2 class="size-4" />{{ t('nav.settings') }}</Button>
+                    <div class="sidebar-disk" v-if="disk"><span>{{ t('ui.disk') }}</span><div class="disk-meter" role="progressbar" :aria-label="t('ui.disk')" :aria-valuenow="Math.round(usedPercent)" :aria-valuemin="0" :aria-valuemax="100"><i :style="{width: `${usedPercent}%`}" :class="{low: disk.available_bytes < 5 * 1024 ** 3}" /></div><span :class="{'text-destructive':disk.available_bytes < 5 * 1024 ** 3}">{{ t('ui.available', {size: formatSize(disk.available_bytes)}) }}</span><small>STR Recorder · macOS</small></div>
+                </div>
+            </aside>
+			<main class="app-main flex-1 min-w-0 overflow-hidden">
+				<div ref="mainScrollEl" class="app-scroll h-full overflow-y-auto scrollbar-overlay">
 					<RouterView v-slot="{ Component }">
 						<Transition name="page" mode="out-in">
 							<component :is="Component" :key="route.path" />
