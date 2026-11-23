@@ -273,7 +273,7 @@
                     <div class="sidebar-disk" v-if="disk"><span>{{ t('ui.disk') }}</span><div class="disk-meter" role="progressbar" :aria-label="t('ui.disk')" :aria-valuenow="Math.round(usedPercent)" :aria-valuemin="0" :aria-valuemax="100"><i :style="{width: `${usedPercent}%`}" :class="{low: disk.available_bytes < 5 * 1024 ** 3}" /></div><span :class="{'text-destructive':disk.available_bytes < 5 * 1024 ** 3}">{{ t('ui.available', {size: formatSize(disk.available_bytes)}) }}</span><small>STR Recorder · macOS</small></div>
                 </div>
             </aside>
-			<main class="app-main flex-1 min-w-0 overflow-hidden">
+			<main tabindex="-1" class="app-main flex-1 min-w-0 overflow-hidden">
 				<div ref="mainScrollEl" class="app-scroll h-full overflow-y-auto scrollbar-overlay">
 					<RouterView v-slot="{ Component }">
 						<Transition name="page" mode="out-in">
