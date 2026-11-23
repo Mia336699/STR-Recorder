@@ -10,7 +10,6 @@
 mod shutdown_ui;
 mod commands;
 mod emitter;
-mod fullscreen;
 mod state;
 
 use crate::emitter::TauriEmitter;
@@ -376,7 +375,6 @@ async fn setup_app(app_handle: tauri::AppHandle) {
     // ── 阶段一结束：显示主窗口，用户可立即操作 ─────────────────────────────────
     // ── Phase 1 complete: show the main window so the user can interact immediately ──
     if let Some(window) = app_handle.get_webview_window("main") {
-        fullscreen::enable_live_fullscreen(&window);
         let _ = window.show();
         let _ = window.set_focus();
     }

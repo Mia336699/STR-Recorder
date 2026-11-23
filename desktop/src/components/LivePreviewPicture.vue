@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch, onMounted, onBeforeUnmount, nextTick } from "vue";
+import { computed, ref, watch, onBeforeUnmount, nextTick } from "vue";
 import { Maximize, Minimize, Play, Volume2, VolumeX, X } from "@lucide/vue";
 import { useI18n } from "vue-i18n";
 import { useFastThumbnail } from "@/composables/useFastThumbnail";
@@ -16,106 +16,44 @@ const video = ref<HTMLVideoElement | null>(null);
 const playing = ref(false);
 const buffering = ref(false);
 const src = computed(() => entry.value?.state === "ready" ? entry.value.url : "");
-type WebKitVideo = HTMLVideoElement & {
-  webkitSupportsFullscreen?: boolean;
-  webkitDisplayingFullscreen?: boolean;
-  webkitEnterFullscreen?: () => void;
-  webkitExitFullscreen?: () => void;
-};
-
-const picture = ref<HTMLElement | null>(null);
+const picture = ref<HTMLDialogElement | null>(null);
 const fullscreenButton = ref<HTMLButtonElement | null>(null);
-const fullscreen = ref(false);
-const fullscreenError = ref(false);
-const fullscreenPending = ref(false);
+const expanded = ref(false);
 const hasPicture = ref(false);
-let requestedVideo: WebKitVideo | null = null;
-let disposed = false;
-
-const canFullscreen = computed(() => props.playable && !!src.value && hasPicture.value);
-const fullscreenLabel = computed(() =>
-  t(fullscreen.value ? "livePreview.exitFullscreen" : "livePreview.fullscreen"),
+const canExpand = computed(() => props.playable && !!src.value && hasPicture.value);
+const expandLabel = computed(() =>
+  t(expanded.value ? "livePreview.exitFullscreen" : "livePreview.fullscreen"),
 );
 
-function syncFullscreen() {
-  const active = document.fullscreenElement === picture.value && !!picture.value
-    || requestedVideo?.webkitDisplayingFullscreen === true;
-  if (active && (!canFullscreen.value || disposed)) {
-    leaveFullscreen();
-    return;
-  }
-  const wasFullscreen = fullscreen.value;
-  fullscreen.value = active;
-  if (wasFullscreen && !active) {
-    requestedVideo = null;
-    void nextTick(() => {
-      const button = fullscreenButton.value;
-      if (button?.getClientRects().length && !button.disabled) button.focus({ preventScroll: true });
-      else if (!disposed) picture.value?.closest("main")?.focus({ preventScroll: true });
-    });
+function restoreFocus() {
+  const button = fullscreenButton.value;
+  if (button?.getClientRects().length && !button.disabled) {
+    button.focus({ preventScroll: true });
+  } else {
+    picture.value?.closest("main")?.focus({ preventScroll: true });
   }
 }
 
-function leaveFullscreen() {
-  if (picture.value && document.fullscreenElement === picture.value) {
-    void document.exitFullscreen().catch(() => {});
-  }
-  if (requestedVideo?.webkitDisplayingFullscreen) {
-    try { requestedVideo.webkitExitFullscreen?.(); } catch { /* WebKit may already be exiting. */ }
-  }
+function closeExpanded() {
+  if (!expanded.value) return;
+  picture.value?.close();
+  expanded.value = false;
+  void nextTick(restoreFocus);
 }
 
-async function toggleFullscreen() {
-  if (fullscreen.value) { leaveFullscreen(); return; }
-  const container = picture.value;
-  const player = video.value as WebKitVideo | null;
-  if (!canFullscreen.value || fullscreenPending.value || !container || !player) return;
-  fullscreenError.value = false;
-  fullscreenPending.value = true;
-  const stillCurrent = () => !disposed && canFullscreen.value && video.value === player;
-  try {
-    if (document.fullscreenEnabled && container.requestFullscreen) {
-      try {
-        await container.requestFullscreen();
-        if (!stillCurrent() && document.fullscreenElement === container) {
-          await document.exitFullscreen();
-        }
-        return;
-      } catch {
-        // Some WKWebView configurations only support fullscreen on the media element.
-      }
-    }
-    if (!stillCurrent()) return;
-    if (player.webkitSupportsFullscreen && player.webkitEnterFullscreen) {
-      requestedVideo = player;
-      player.webkitEnterFullscreen();
-    } else {
-      fullscreenError.value = true;
-    }
-  } catch {
-    if (stillCurrent()) fullscreenError.value = true;
-  } finally {
-    fullscreenPending.value = false;
+function toggleExpanded() {
+  if (expanded.value) {
+    closeExpanded();
+  } else if (canExpand.value && picture.value) {
+    picture.value.showModal();
+    expanded.value = true;
+    fullscreenButton.value?.focus({ preventScroll: true });
   }
 }
 
-function onNativeFullscreen(event: Event) {
-  if (event.target !== requestedVideo) return;
-  syncFullscreen();
-}
-
-function syncNativeSound(event: Event) {
-  const player = event.target as WebKitVideo;
-  if (player === video.value && player.webkitDisplayingFullscreen && player.muted !== muted.value) {
-    previews.toggleSound(props.username);
-  }
-}
-
-onMounted(() => document.addEventListener("fullscreenchange", syncFullscreen));
 watch(src, () => {
-  leaveFullscreen();
+  closeExpanded();
   hasPicture.value = false;
-  fullscreenError.value = false;
   playing.value = false;
   buffering.value = false;
 }, { flush: "sync" });
@@ -138,58 +76,75 @@ function playbackError(event: Event) {
   if (current && current.state === "ready" && element === video.value && current.id === element.dataset.previewId) previews.fail(props.username, current.id);
 }
 onBeforeUnmount(() => {
-  const main = fullscreen.value ? picture.value?.closest("main") : null;
-  disposed = true;
-  leaveFullscreen();
+  const main = expanded.value ? picture.value?.closest("main") : null;
+  picture.value?.close();
   if (main) void nextTick(() => main.focus({ preventScroll: true }));
-  document.removeEventListener("fullscreenchange", syncFullscreen);
   void previews.stop(props.username);
 });
 </script>
 <template>
-  <div ref="picture" class="live-preview-picture relative aspect-video bg-muted overflow-hidden group"
-    :class="{ 'cursor-pointer': playable || entry }">
-    <video v-if="src" :key="entry!.id" ref="video" :src="src" :data-preview-id="entry!.id"
-      :muted="muted" autoplay playsinline preload="auto" class="w-full h-full object-contain bg-black"
-      @loadedmetadata="hasPicture = !!video?.videoWidth"
-      @webkitbeginfullscreen="onNativeFullscreen" @webkitendfullscreen="onNativeFullscreen" @volumechange="syncNativeSound"
-      @playing="playing = true; buffering = false; hasPicture = !!video?.videoWidth" @waiting="buffering = true" @error="playbackError" />
-    <img v-else-if="image && !failed" :key="image" :src="image" :alt="displayName" loading="lazy"
-      class="w-full h-full object-cover" @error="failed = true" />
-    <div v-else class="w-full h-full flex items-center justify-center text-4xl font-bold text-muted-foreground/20">{{ displayName[0]?.toUpperCase() }}</div>
-    <div v-if="!entry && playable" class="absolute inset-0 flex items-center justify-center bg-black/10 opacity-80 group-hover:opacity-100 group-focus-within:opacity-100 pointer-events-none">
-      <Play class="size-8 text-white fill-white/20" /><span class="absolute bottom-2 text-xs text-white">{{ t('livePreview.open') }}</span>
-    </div>
-    <div v-if="entry && (entry.state !== 'ready' || !playing || buffering)" class="absolute inset-0 flex items-center justify-center bg-black/55 text-white text-xs p-4 text-center pointer-events-none" role="status">
-      {{ entry.state === 'error' ? (entry.message || t('livePreview.error')) : entry.state === 'retrying' ? t('livePreview.retrying') : buffering || entry.state === 'ready' ? t('livePreview.buffering') : t('livePreview.connecting') }}
-    </div>
-    <button v-if="!fullscreen" type="button" class="absolute inset-0 z-10 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
-      :disabled="!playable && !entry" :aria-label="`${displayName} · ${entry && entry.state !== 'error' ? t('livePreview.close') : t('livePreview.open')}`"
-      :aria-pressed="!!entry && entry.state !== 'error'" @click.stop="toggle" />
-    <template v-if="entry && entry.state !== 'error'">
-      <span class="absolute top-2 left-2 bg-black/60 text-white text-[10px] rounded px-1.5 py-0.5 pointer-events-none">{{ t('livePreview.live') }}</span>
-      <div class="absolute right-2 bottom-2 z-20 flex gap-1" @click.stop>
-        <button type="button" class="rounded bg-black/65 text-white p-2" :title="muted ? t('livePreview.unmute') : t('livePreview.mute')" :aria-label="muted ? t('livePreview.unmute') : t('livePreview.mute')" :disabled="!src" @click.stop="sound">
-          <VolumeX v-if="muted" class="size-4" /><Volume2 v-else class="size-4" />
-        </button>
-        <button ref="fullscreenButton" type="button" class="rounded bg-black/65 text-white p-2"
-          :disabled="!canFullscreen" :aria-label="`${displayName} · ${fullscreenLabel}`" :title="fullscreenLabel"
-          :aria-pressed="fullscreen" @click.stop="toggleFullscreen">
-          <Minimize v-if="fullscreen" class="size-4" /><Maximize v-else class="size-4" />
-        </button>
-        <button type="button" class="rounded bg-black/65 text-white p-2" :aria-label="t('livePreview.close')" :title="t('livePreview.close')" @click.stop="previews.stop(username)"><X class="size-4" /></button>
+  <div class="aspect-video">
+    <dialog ref="picture" class="live-preview-picture bg-muted overflow-hidden group"
+      :class="{ 'cursor-pointer': !expanded && (playable || entry) }"
+      :role="expanded ? 'dialog' : 'group'" :aria-label="displayName" @cancel.prevent="closeExpanded">
+      <video v-if="src" :key="entry!.id" ref="video" :src="src" :data-preview-id="entry!.id"
+        :muted="muted" autoplay playsinline preload="auto" class="w-full h-full object-contain bg-black"
+        @loadedmetadata="hasPicture = !!video?.videoWidth"
+        @playing="playing = true; buffering = false; hasPicture = !!video?.videoWidth" @waiting="buffering = true" @error="playbackError" />
+      <img v-else-if="image && !failed" :key="image" :src="image" :alt="displayName" loading="lazy"
+        class="w-full h-full object-cover" @error="failed = true" />
+      <div v-else class="w-full h-full flex items-center justify-center text-4xl font-bold text-muted-foreground/20">{{ displayName[0]?.toUpperCase() }}</div>
+      <div v-if="!entry && playable" class="absolute inset-0 flex items-center justify-center bg-black/10 opacity-80 group-hover:opacity-100 group-focus-within:opacity-100 pointer-events-none">
+        <Play class="size-8 text-white fill-white/20" /><span class="absolute bottom-2 text-xs text-white">{{ t('livePreview.open') }}</span>
       </div>
-    </template>
-    <p v-if="fullscreenError" role="status" class="absolute bottom-12 right-2 z-20 rounded bg-black/80 px-2 py-1 text-xs text-white">
-      {{ t("livePreview.fullscreenUnavailable") }}
-    </p>
+      <div v-if="entry && (entry.state !== 'ready' || !playing || buffering)" class="absolute inset-0 flex items-center justify-center bg-black/55 text-white text-xs p-4 text-center pointer-events-none" role="status">
+        {{ entry.state === 'error' ? (entry.message || t('livePreview.error')) : entry.state === 'retrying' ? t('livePreview.retrying') : buffering || entry.state === 'ready' ? t('livePreview.buffering') : t('livePreview.connecting') }}
+      </div>
+      <button v-if="!expanded" type="button" class="absolute inset-0 z-10 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
+        :disabled="!playable && !entry" :aria-label="`${displayName} · ${entry && entry.state !== 'error' ? t('livePreview.close') : t('livePreview.open')}`"
+        :aria-pressed="!!entry && entry.state !== 'error'" @click.stop="toggle" />
+      <template v-if="entry && entry.state !== 'error'">
+        <span class="absolute top-2 left-2 bg-black/60 text-white text-[10px] rounded px-1.5 py-0.5 pointer-events-none">{{ t('livePreview.live') }}</span>
+        <div class="absolute right-2 bottom-2 z-20 flex gap-1" @click.stop>
+          <button type="button" class="rounded bg-black/65 text-white p-2" :title="muted ? t('livePreview.unmute') : t('livePreview.mute')" :aria-label="muted ? t('livePreview.unmute') : t('livePreview.mute')" :disabled="!src" @click.stop="sound">
+            <VolumeX v-if="muted" class="size-4" /><Volume2 v-else class="size-4" />
+          </button>
+          <button ref="fullscreenButton" type="button" class="rounded bg-black/65 text-white p-2"
+            :disabled="!canExpand" :aria-label="`${displayName} · ${expandLabel}`" :title="expandLabel"
+            :aria-pressed="expanded" @click.stop="toggleExpanded">
+            <Minimize v-if="expanded" class="size-4" /><Maximize v-else class="size-4" />
+          </button>
+          <button type="button" class="rounded bg-black/65 text-white p-2" :aria-label="t('livePreview.close')" :title="t('livePreview.close')" @click.stop="previews.stop(username)"><X class="size-4" /></button>
+        </div>
+      </template>
+    </dialog>
   </div>
 </template>
 
 <style scoped>
-.live-preview-picture:fullscreen {
+/* The same video stays mounted when the dialog enters the window's top layer. */
+.live-preview-picture {
+  display: block;
+  position: relative;
   width: 100%;
   height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  color: inherit;
+}
+
+.live-preview-picture[open] {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  background: black;
+}
+
+.live-preview-picture::backdrop {
   background: black;
 }
 </style>

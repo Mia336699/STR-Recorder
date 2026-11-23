@@ -1,6 +1,4 @@
 //! Full native UI acceptance app. Uses disposable synthetic media and real production views/commands.
-#[path = "../src/fullscreen.rs"]
-mod fullscreen;
 #[path="../src/state.rs"] mod state;
 #[path="../src/shutdown_ui.rs"] mod shutdown_ui;
 #[path="../src/emitter.rs"] mod emitter;
@@ -64,7 +62,7 @@ fn main(){
  let recorder=RecorderManager::new(app_state.clone());let monitor=StatusMonitor::new(app_state.clone(),recorder.clone());
  let previews=runtime.block_on(PreviewManager::with_resolver(root.join("cache"),emitter.clone(),fixture::resolver(&source))).unwrap();
  app.manage(Source(source));app.manage(state::DesktopState{exit_ready:AtomicBool::new(false),exiting:AtomicBool::new(false),startup_done:Arc::new(AtomicBool::new(true)),app_state,recorder,monitor,emitter,previews:Some(previews)});
- if let Some(w)=app.get_webview_window("main"){fullscreen::enable_live_fullscreen(&w);if std::env::var("STR_UI_QA_NARROW").as_deref()==Ok("1"){w.set_size(tauri::LogicalSize::new(980.0,600.0)).unwrap();}w.navigate("tauri://localhost/".parse().unwrap()).unwrap();let _=w.set_title("STR UI QA — isolated synthetic data");let _=w.show();let _=w.set_focus();}
+ if let Some(w)=app.get_webview_window("main"){if std::env::var("STR_UI_QA_NARROW").as_deref()==Ok("1"){w.set_size(tauri::LogicalSize::new(980.0,600.0)).unwrap();}w.navigate("tauri://localhost/".parse().unwrap()).unwrap();let _=w.set_title("STR UI QA — isolated synthetic data");let _=w.show();let _=w.set_focus();}
  Ok(())
  }).invoke_handler(tauri::generate_handler![
             commands::start_live_preview,

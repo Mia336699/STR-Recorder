@@ -2,7 +2,7 @@ import { zhUI } from "./ui";
 export default {
  ui: zhUI,
     livePreview: {
-        fullscreen: "全屏播放", exitFullscreen: "退出全屏", fullscreenUnavailable: "此直播暂时无法进入全屏。",
+        fullscreen: "窗口内放大", exitFullscreen: "退出放大",
         open: "点击观看直播", close: "关闭观看", connecting: "连接直播中…", buffering: "正在缓冲…", retrying: "连接中断，正在重试…", error: "无法播放直播，点击重试", live: "直播预览", mute: "静音", unmute: "打开声音（其他房间自动静音）",
     },
 	nav: {

@@ -2,7 +2,7 @@ import { enUI } from "./ui";
 export default {
  ui: enUI,
     livePreview: {
-        fullscreen: "Full screen", exitFullscreen: "Exit full screen", fullscreenUnavailable: "Full screen is unavailable for this live stream.",
+        fullscreen: "Expand in window", exitFullscreen: "Exit expanded view",
         open: "Watch live", close: "Close live preview", connecting: "Connecting…", buffering: "Buffering…", retrying: "Connection interrupted, retrying…", error: "Unable to play. Click to retry", live: "LIVE PREVIEW", mute: "Mute", unmute: "Unmute (mute other rooms)",
     },
 	nav: {
