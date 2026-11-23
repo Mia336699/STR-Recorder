@@ -2,6 +2,7 @@ import { zhUI } from "./ui";
 export default {
  ui: zhUI,
     livePreview: {
+        pinWindow: "窗口置顶", unpinWindow: "取消置顶", pinFailed: "无法更改窗口置顶，请重试。", unpinFailed: "未能取消窗口置顶，请重新打开放大播放后重试。",
         fullscreen: "窗口内放大", exitFullscreen: "退出放大",
         open: "点击观看直播", close: "关闭观看", connecting: "连接直播中…", buffering: "正在缓冲…", retrying: "连接中断，正在重试…", error: "无法播放直播，点击重试", live: "直播预览", mute: "静音", unmute: "打开声音（其他房间自动静音）",
     },

@@ -2,6 +2,7 @@ import { enUI } from "./ui";
 export default {
  ui: enUI,
     livePreview: {
+        pinWindow: "Keep window on top", unpinWindow: "Stop keeping window on top", pinFailed: "Could not change the window level. Try again.", unpinFailed: "Could not clear always on top. Open the expanded view again to retry.",
         fullscreen: "Expand in window", exitFullscreen: "Exit expanded view",
         open: "Watch live", close: "Close live preview", connecting: "Connecting…", buffering: "Buffering…", retrying: "Connection interrupted, retrying…", error: "Unable to play. Click to retry", live: "LIVE PREVIEW", mute: "Mute", unmute: "Unmute (mute other rooms)",
     },

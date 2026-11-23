@@ -1,11 +1,16 @@
 <script setup lang="ts">
 import { computed, ref, watch, onBeforeUnmount, nextTick } from "vue";
-import { Maximize, Minimize, Play, Volume2, VolumeX, X } from "@lucide/vue";
+import { Maximize, Minimize, Pin, PinOff, Play, Volume2, VolumeX, X } from "@lucide/vue";
 import { useI18n } from "vue-i18n";
 import { useFastThumbnail } from "@/composables/useFastThumbnail";
 import { livePreviews as previews } from "@/composables/useLivePreviews";
+import { expandedWindowPin } from "@/composables/useExpandedWindowPin";
+import { useNotify } from "@/composables/useNotify";
 const props = defineProps<{ username: string; playable: boolean; thumbnail?: string | null }>();
 const { t } = useI18n();
+const { toast } = useNotify();
+const { pinned, pending, setPinned } = expandedWindowPin;
+const pinError = ref(false);
 const entry = computed(() => previews.entries.get(props.username));
 const image = useFastThumbnail(computed(() => props.thumbnail));
 const failed = ref(false);
@@ -34,10 +39,28 @@ function restoreFocus() {
   }
 }
 
+function releaseWindowPin() {
+  void setPinned(false, true).catch(() => {
+    toast(t("livePreview.unpinFailed"), "error");
+  });
+}
+
+async function toggleWindowPin() {
+  if (!expanded.value || pending.value) return;
+
+  pinError.value = false;
+  try {
+    await setPinned(!pinned.value);
+  } catch {
+    if (expanded.value) pinError.value = true;
+  }
+}
+
 function closeExpanded() {
   if (!expanded.value) return;
   picture.value?.close();
   expanded.value = false;
+  releaseWindowPin();
   void nextTick(restoreFocus);
 }
 
@@ -47,6 +70,8 @@ function toggleExpanded() {
   } else if (canExpand.value && picture.value) {
     picture.value.showModal();
     expanded.value = true;
+    pinError.value = false;
+    if (pinned.value && !pending.value) releaseWindowPin();
     fullscreenButton.value?.focus({ preventScroll: true });
   }
 }
@@ -77,7 +102,10 @@ function playbackError(event: Event) {
 }
 onBeforeUnmount(() => {
   const main = expanded.value ? picture.value?.closest("main") : null;
-  picture.value?.close();
+  if (expanded.value) {
+    picture.value?.close();
+    releaseWindowPin();
+  }
   if (main) void nextTick(() => main.focus({ preventScroll: true }));
   void previews.stop(props.username);
 });
@@ -86,7 +114,7 @@ onBeforeUnmount(() => {
   <div class="aspect-video">
     <dialog ref="picture" class="live-preview-picture bg-muted overflow-hidden group"
       :class="{ 'cursor-pointer': !expanded && (playable || entry) }"
-      :role="expanded ? 'dialog' : 'group'" :aria-label="displayName" @cancel.prevent="closeExpanded">
+      :role="expanded ? 'dialog' : 'group'" :aria-label="displayName" @cancel.prevent="closeExpanded" @close="!picture?.open && closeExpanded()">
       <video v-if="src" :key="entry!.id" ref="video" :src="src" :data-preview-id="entry!.id"
         :muted="muted" autoplay playsinline preload="auto" class="w-full h-full object-contain bg-black"
         @loadedmetadata="hasPicture = !!video?.videoWidth"
@@ -109,6 +137,13 @@ onBeforeUnmount(() => {
           <button type="button" class="rounded bg-black/65 text-white p-2" :title="muted ? t('livePreview.unmute') : t('livePreview.mute')" :aria-label="muted ? t('livePreview.unmute') : t('livePreview.mute')" :disabled="!src" @click.stop="sound">
             <VolumeX v-if="muted" class="size-4" /><Volume2 v-else class="size-4" />
           </button>
+          <button v-if="expanded" type="button"
+            class="rounded bg-black/65 text-white p-2 aria-pressed:bg-white aria-pressed:text-black disabled:opacity-60"
+            :aria-pressed="pinned" :disabled="pending"
+            :aria-label="t(pinned ? 'livePreview.unpinWindow' : 'livePreview.pinWindow')"
+            :title="t(pinned ? 'livePreview.unpinWindow' : 'livePreview.pinWindow')" @click.stop="toggleWindowPin">
+            <PinOff v-if="pinned" class="size-4" /><Pin v-else class="size-4" />
+          </button>
           <button ref="fullscreenButton" type="button" class="rounded bg-black/65 text-white p-2"
             :disabled="!canExpand" :aria-label="`${displayName} · ${expandLabel}`" :title="expandLabel"
             :aria-pressed="expanded" @click.stop="toggleExpanded">
@@ -117,6 +152,10 @@ onBeforeUnmount(() => {
           <button type="button" class="rounded bg-black/65 text-white p-2" :aria-label="t('livePreview.close')" :title="t('livePreview.close')" @click.stop="previews.stop(username)"><X class="size-4" /></button>
         </div>
       </template>
+      <p v-if="expanded && pinError" role="status"
+        class="absolute bottom-12 right-2 z-20 rounded bg-black/80 px-2 py-1 text-xs text-white">
+        {{ t("livePreview.pinFailed") }}
+      </p>
     </dialog>
   </div>
 </template>

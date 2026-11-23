@@ -6,7 +6,7 @@
 
 ## 安装
 
-在本仓库 Releases 下载 `STR-Recorder-0.3.10-arm64.dmg`，将 STR Recorder 拖到 Applications 后启动。
+在本仓库 Releases 下载 `STR-Recorder-0.3.11-arm64.dmg`，将 STR Recorder 拖到 Applications 后启动。
 
 - Apple Silicon，macOS 26 或以上；暂不支持 Intel Mac。
 - 随包提供 FFmpeg、ffprobe 和四个后处理模块，运行时不需要 Node.js、Rust、Homebrew 或网页服务。
